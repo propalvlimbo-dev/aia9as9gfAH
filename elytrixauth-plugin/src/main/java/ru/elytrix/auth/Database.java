@@ -1,5 +1,6 @@
 package ru.elytrix.auth;
 
+import java.io.File;
 import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -8,13 +9,20 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Тонкий слой поверх MariaDB (JDBC). Пул соединений попроще, но рабочий. */
+/**
+ * Хранилище аккаунтов: HSQLDB, встроенная (embedded) прямо в плагин.
+ * Никакого отдельного сервера БД не нужно — файл БД лежит в папке плагина
+ * (plugins/ElytrixAuth/db/elytrix.*), таблицы создаются автоматически
+ * при первом запуске.
+ */
 public final class Database {
 
     /** Строка игрока из таблицы players. */
@@ -32,83 +40,103 @@ public final class Database {
         }
     }
 
+    /** Запись для бота: ожидающий 2FA-запрос входа. */
+    public static final class PendingRequest {
+        public final long id;
+        public final String playerUuid;
+        public final String nickname;
+        public final String ip;
+        public final long tgId;
+
+        PendingRequest(long id, String playerUuid, String nickname, String ip, long tgId) {
+            this.id = id;
+            this.playerUuid = playerUuid;
+            this.nickname = nickname;
+            this.ip = ip;
+            this.tgId = tgId;
+        }
+    }
+
+    private static final int MAX_POOL = 4;
+
     private final String url;
-    private final String user;
-    private final String password;
-    private final int maxSize;
     private final Logger log;
 
     private final Deque<Connection> idle = new ArrayDeque<>();
     private int open;
 
-    public Database(PluginConfig cfg, Logger log) throws SQLException {
-        this.url = "jdbc:mariadb://" + cfg.dbHost() + ":" + cfg.dbPort() + "/" + cfg.dbName()
-                + "?connectTimeout=" + cfg.dbConnTimeout()
-                + "&socketTimeout=" + cfg.dbSockTimeout()
-                + "&useUnicode=true&characterEncoding=utf8"
-                + "&useServerPrepStmts=false&cachePrepStmts=false";
-        this.user = cfg.dbUser();
-        this.password = cfg.dbPassword();
-        this.maxSize = cfg.dbPoolSize();
+    public Database(File dataFolder, Logger log) throws SQLException {
         this.log = log;
-        try {
-            Class.forName("org.mariadb.jdbc.Driver");
-        } catch (ClassNotFoundException e) {
-            throw new SQLException("mariadb-java-client не вшит в jar плагина", e);
+        File dbDir = new File(dataFolder, "db");
+        if (!dbDir.exists() && !dbDir.mkdirs()) {
+            throw new SQLException("Не удалось создать папку БД: " + dbDir);
         }
-        // проверка соединения + автосоздание таблиц (schema не нужна руками)
-        try (Connection c = newConnection()) {
-            c.isValid(3);
+        this.url = "jdbc:hsqldb:file:" + new File(dbDir, "elytrix").getAbsolutePath()
+                + ";hsqldb.lock_file=false;hsqldb.default_table_type=cached";
+        try {
+            Class.forName("org.hsqldb.jdbc.JDBCDriver");
+        } catch (ClassNotFoundException e) {
+            throw new SQLException("HSQLDB driver не вшит в jar плагина", e);
+        }
+        // проверка соединения + автосоздание таблиц
+        try (Connection c = DriverManager.getConnection(url)) {
             ensureSchema(c);
         }
     }
 
-    /** Таблицы создаются сами при старте (CREATE TABLE IF NOT EXISTS). */
+    /** Таблицы создаются сами при старте; повторные запуски безопасны. */
     private void ensureSchema(Connection c) throws SQLException {
         try (Statement st = c.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS players ("
-                    + " uuid CHAR(36) NOT NULL,"
-                    + " nickname VARCHAR(16) NOT NULL,"
-                    + " password_hash VARCHAR(255) DEFAULT NULL,"
-                    + " tg_id BIGINT DEFAULT NULL,"
-                    + " reg_ip VARCHAR(45) DEFAULT NULL,"
+                    + " uuid VARCHAR(36) PRIMARY KEY,"
+                    + " nickname VARCHAR(16) NOT NULL UNIQUE,"
+                    + " password_hash VARCHAR(255),"
+                    + " tg_id BIGINT,"
+                    + " reg_ip VARCHAR(45),"
                     + " reg_ts BIGINT NOT NULL,"
-                    + " last_ip VARCHAR(45) DEFAULT NULL,"
-                    + " last_login_ts BIGINT DEFAULT NULL,"
-                    + " PRIMARY KEY (uuid),"
-                    + " UNIQUE KEY uq_players_nickname (nickname),"
-                    + " KEY idx_players_tg (tg_id)"
-                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                    + " last_ip VARCHAR(45),"
+                    + " last_login_ts BIGINT"
+                    + ")");
             st.execute("CREATE TABLE IF NOT EXISTS pending_links ("
-                    + " id BIGINT AUTO_INCREMENT PRIMARY KEY,"
-                    + " player_uuid CHAR(36) NOT NULL,"
+                    + " id BIGINT IDENTITY PRIMARY KEY,"
+                    + " player_uuid VARCHAR(36) NOT NULL,"
                     + " code VARCHAR(10) NOT NULL,"
-                    + " status ENUM('open','bound','expired') NOT NULL DEFAULT 'open',"
+                    + " status VARCHAR(16) NOT NULL,"
                     + " created_ts BIGINT NOT NULL,"
-                    + " expires_ts BIGINT NOT NULL,"
-                    + " KEY idx_links_status (status, expires_ts),"
-                    + " KEY idx_links_code (code)"
-                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                    + " expires_ts BIGINT NOT NULL"
+                    + ")");
             st.execute("CREATE TABLE IF NOT EXISTS login_requests ("
-                    + " id BIGINT AUTO_INCREMENT PRIMARY KEY,"
-                    + " player_uuid CHAR(36) NOT NULL,"
+                    + " id BIGINT IDENTITY PRIMARY KEY,"
+                    + " player_uuid VARCHAR(36) NOT NULL,"
                     + " nickname VARCHAR(16) NOT NULL,"
-                    + " ip VARCHAR(45) DEFAULT NULL,"
-                    + " status ENUM('pending','notified','confirmed','denied','expired') NOT NULL DEFAULT 'pending',"
+                    + " ip VARCHAR(45),"
+                    + " status VARCHAR(16) NOT NULL,"
                     + " created_ts BIGINT NOT NULL,"
-                    + " expires_ts BIGINT NOT NULL,"
-                    + " KEY idx_requests_status (status, expires_ts),"
-                    + " KEY idx_requests_player (player_uuid)"
-                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                    + " expires_ts BIGINT NOT NULL"
+                    + ")");
+        }
+        // индексы
+        createIndexIfMissing(c, "idx_players_tg", "CREATE INDEX IF NOT EXISTS idx_players_tg ON players(tg_id)");
+        createIndexIfMissing(c, "idx_links_code", "CREATE INDEX IF NOT EXISTS idx_links_code ON pending_links(code)");
+        createIndexIfMissing(c, "idx_links_status", "CREATE INDEX IF NOT EXISTS idx_links_status ON pending_links(status, expires_ts)");
+        createIndexIfMissing(c, "idx_requests_status", "CREATE INDEX IF NOT EXISTS idx_requests_status ON login_requests(status, expires_ts)");
+        createIndexIfMissing(c, "idx_requests_player", "CREATE INDEX IF NOT EXISTS idx_requests_player ON login_requests(player_uuid)");
+    }
+
+    private void createIndexIfMissing(Connection c, String name, String ddl) {
+        try (Statement st = c.createStatement()) {
+            st.execute(ddl);
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "Не удалось создать индекс " + name + ": " + e.getMessage());
         }
     }
 
     private Connection newConnection() throws SQLException {
-        return DriverManager.getConnection(url, user, password);
+        return DriverManager.getConnection(url);
     }
 
     private synchronized Connection acquire() throws SQLException {
-        for (int i = 0; i < 50; i++) { // ~2.5 сек ожидания максимум
+        for (int i = 0; i < 100; i++) {
             Connection c = idle.poll();
             if (c != null) {
                 if (c.isValid(2)) {
@@ -118,7 +146,7 @@ public final class Database {
                 open--;
                 continue;
             }
-            if (open < maxSize) {
+            if (open < MAX_POOL) {
                 open++;
                 return newConnection();
             }
@@ -147,6 +175,13 @@ public final class Database {
         }
     }
 
+    private void closeQuiet(Connection c) {
+        try {
+            c.close();
+        } catch (SQLException ignored) {
+        }
+    }
+
     public synchronized void close() {
         Connection c;
         while ((c = idle.poll()) != null) {
@@ -155,20 +190,12 @@ public final class Database {
         open = 0;
     }
 
-    private void closeQuiet(Connection c) {
-        try {
-            c.close();
-        } catch (SQLException ignored) {
-        }
-    }
-
-    /** Заодно регенерирует pool при ошибках соединения: discard + retry один раз. */
     private <T> T withConn(SqlWork<T> work) throws SQLException {
         Connection c = acquire();
         try {
             return work.run(c);
         } catch (SQLException e) {
-            discard(c); // соединение, вероятно, битое
+            discard(c);
             c = null;
             Connection c2 = acquire();
             try {
@@ -190,6 +217,14 @@ public final class Database {
 
     // ---------------- players ----------------
 
+    private PlayerRow row(ResultSet rs) throws SQLException {
+        return new PlayerRow(
+                UUID.fromString(rs.getString("uuid")),
+                rs.getString("nickname"),
+                rs.getString("password_hash"),
+                rs.getObject("tg_id") == null ? null : rs.getLong("tg_id"));
+    }
+
     public Optional<PlayerRow> findPlayer(String nickname) {
         try {
             return withConn(c -> {
@@ -197,43 +232,12 @@ public final class Database {
                         "SELECT uuid, nickname, password_hash, tg_id FROM players WHERE nickname = ?")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            return Optional.of(new PlayerRow(
-                                    UUID.fromString(rs.getString("uuid")),
-                                    rs.getString("nickname"),
-                                    rs.getString("password_hash"),
-                                    rs.getObject("tg_id") == null ? null : rs.getLong("tg_id")));
-                        }
-                        return Optional.empty();
+                        return rs.next() ? Optional.of(row(rs)) : Optional.empty();
                     }
                 }
             });
         } catch (SQLException e) {
             log.log(Level.WARNING, "findPlayer error", e);
-            return Optional.empty();
-        }
-    }
-
-    public Optional<PlayerRow> findPlayerByUuid(UUID uuid) {
-        try {
-            return withConn(c -> {
-                try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id FROM players WHERE uuid = ?")) {
-                    ps.setString(1, uuid.toString());
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            return Optional.of(new PlayerRow(
-                                    uuid,
-                                    rs.getString("nickname"),
-                                    rs.getString("password_hash"),
-                                    rs.getObject("tg_id") == null ? null : rs.getLong("tg_id")));
-                        }
-                        return Optional.empty();
-                    }
-                }
-            });
-        } catch (SQLException e) {
-            log.log(Level.WARNING, "findPlayerByUuid error", e);
             return Optional.empty();
         }
     }
@@ -269,36 +273,25 @@ public final class Database {
         });
     }
 
-    /** Используется ботом при /link; плагину нужно только читать tg_id. */
-    public void setTgId(UUID uuid, long tgId) throws SQLException {
-        withConn(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE players SET tg_id = ? WHERE uuid = ?")) {
-                ps.setLong(1, tgId);
-                ps.setString(2, uuid.toString());
-                ps.executeUpdate();
-            }
-            return null;
-        });
-    }
-
     // ---------------- pending_links (привязка TG) ----------------
 
-    /** Создаёт код с проверкой на коллизию среди открытых кодов. */
-    public int createPendingLink(UUID uuid, long ttlSec, long now) throws SQLException {
+    /** Создаёт одноразовый код привязки; возвращает id созданной строки. */
+    public long createPendingLink(UUID uuid, long ttlSec, long now) throws SQLException {
         SecureRandom rnd = new SecureRandom();
-        for (int attempt = 0; attempt < 6; attempt++) {
-            String code = String.valueOf(rnd.nextInt(100_000_000));
-            code = ("00000000" + code).substring(code.length()); // 8 цифр
+        for (int attempt = 0; attempt < 8; attempt++) {
+            String code = String.format("%08d", rnd.nextInt(100_000_000));
             final String c = code;
-            Integer id = withConn(conn -> {
-                try (PreparedStatement dup = conn.prepareStatement(
-                        "SELECT 1 FROM pending_links WHERE code = ? AND status = 'open' LIMIT 1")) {
-                    dup.setString(1, c);
-                    try (ResultSet rs = dup.executeQuery()) {
-                        if (rs.next()) {
-                            return null;
-                        }
+            Long id = withConn(conn -> {
+                boolean dup;
+                try (PreparedStatement dupPs = conn.prepareStatement(
+                        "SELECT code FROM pending_links WHERE code = ? FETCH FIRST 1 ROWS ONLY")) {
+                    dupPs.setString(1, c);
+                    try (ResultSet rs = dupPs.executeQuery()) {
+                        dup = rs.next();
                     }
+                }
+                if (dup) {
+                    return null;
                 }
                 try (PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO pending_links (player_uuid, code, status, created_ts, expires_ts) "
@@ -310,7 +303,7 @@ public final class Database {
                     ps.executeUpdate();
                     try (ResultSet keys = ps.getGeneratedKeys()) {
                         if (keys.next()) {
-                            return keys.getInt(1);
+                            return keys.getLong(1);
                         }
                     }
                 }
@@ -323,13 +316,13 @@ public final class Database {
         throw new SQLException("Не удалось сгенерировать уникальный код привязки");
     }
 
-    /** true = игрок подтвердил привязку в боте. */
-    public boolean isLinkBound(int linkId) {
+    /** true = игрок подтвердил привязку (бот вызвал /api/link). */
+    public boolean isLinkBound(long linkId) {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT status FROM pending_links WHERE id = ?")) {
-                    ps.setInt(1, linkId);
+                    ps.setLong(1, linkId);
                     try (ResultSet rs = ps.executeQuery()) {
                         return rs.next() && "bound".equals(rs.getString("status"));
                     }
@@ -341,17 +334,14 @@ public final class Database {
         }
     }
 
-    /** Код привязки по id (нужен, чтобы показать игроку). */
-    public String linkCode(int linkId) throws SQLException {
+    /** Код привязки по id (показываем игроку в /addtg). */
+    public String linkCode(long linkId) throws SQLException {
         return withConn(c -> {
             try (PreparedStatement ps = c.prepareStatement(
                     "SELECT code FROM pending_links WHERE id = ?")) {
-                ps.setInt(1, linkId);
+                ps.setLong(1, linkId);
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        return rs.getString("code");
-                    }
-                    return null;
+                    return rs.next() ? rs.getString("code") : null;
                 }
             }
         });
@@ -380,7 +370,7 @@ public final class Database {
         });
     }
 
-    /** pending | confirmed | denied | expired | not_found */
+    /** pending | notified | confirmed | denied | expired | not_found */
     public String pollLoginRequest(long requestId) {
         try {
             return withConn(c -> {
@@ -392,9 +382,7 @@ public final class Database {
                             return "not_found";
                         }
                         String st = rs.getString("status");
-                        if (("pending".equals(st) || "notified".equals(st)
-                                || "confirmed".equals(st) || "denied".equals(st))
-                                && rs.getLong("expires_ts") < System.currentTimeMillis() / 1000L) {
+                        if (rs.getLong("expires_ts") < System.currentTimeMillis() / 1000L) {
                             return "expired";
                         }
                         return st;
@@ -409,32 +397,16 @@ public final class Database {
 
     // ---------------- HTTP API для бота ----------------
 
-    /** Запись для бота: ожидающий 2FA-запрос входа. */
-    public static final class PendingRequest {
-        public final long id;
-        public final String playerUuid;
-        public final String nickname;
-        public final String ip;
-        public final long tgId;
-
-        PendingRequest(long id, String playerUuid, String nickname, String ip, long tgId) {
-            this.id = id;
-            this.playerUuid = playerUuid;
-            this.nickname = nickname;
-            this.ip = ip;
-            this.tgId = tgId;
-        }
-    }
-
     /** Список ожидающих подтверждения 2FA-запросов (для бота), только с привязкой TG. */
-    public java.util.List<PendingRequest> listPendingRequests(long now) throws SQLException {
+    public List<PendingRequest> listPendingRequests(long now) throws SQLException {
         return withConn(c -> {
-            java.util.List<PendingRequest> out = new java.util.ArrayList<>();
+            List<PendingRequest> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(
                     "SELECT lr.id, lr.player_uuid, lr.nickname, lr.ip, p.tg_id "
-                            + "FROM login_requests lr JOIN players p ON p.uuid = lr.player_uuid "
-                            + "WHERE lr.status = 'pending' AND lr.expires_ts > ? AND p.tg_id IS NOT NULL "
-                            + "ORDER BY lr.id ASC LIMIT 50")) {
+                            + "FROM login_requests lr, players p "
+                            + "WHERE p.uuid = lr.player_uuid AND lr.status = 'pending' "
+                            + "AND lr.expires_ts > ? AND p.tg_id IS NOT NULL "
+                            + "ORDER BY lr.id ASC FETCH FIRST 50 ROWS ONLY")) {
                 ps.setLong(1, now);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -474,8 +446,8 @@ public final class Database {
         return withConn(c -> {
             try {
                 c.setAutoCommit(false);
-                // 1) "занимаем" код (только open и не истёкший)
                 String playerUuid;
+                // 1) «занимаем» код (только open и не истёкший)
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE pending_links SET status = 'bound' "
                                 + "WHERE code = ? AND status = 'open' AND expires_ts >= ?")) {
@@ -497,14 +469,14 @@ public final class Database {
                         playerUuid = rs.getString("player_uuid");
                     }
                 }
-                // 2) пишем tg_id игроку
-                String nickname;
+                // 2) пишем tg_id игроку и читаем ник
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE players SET tg_id = ? WHERE uuid = ?")) {
                     ps.setLong(1, tgId);
                     ps.setString(2, playerUuid);
                     ps.executeUpdate();
                 }
+                String nickname;
                 try (PreparedStatement ps = c.prepareStatement(
                         "SELECT nickname FROM players WHERE uuid = ?")) {
                     ps.setString(1, playerUuid);

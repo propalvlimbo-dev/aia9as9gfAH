@@ -18,39 +18,27 @@
 |---|---|---|
 | Плагин | `elytrixauth-plugin/dist/ElytrixAuth-1.0.0.jar` | Java (Bungee API): команды `/reg /register /login /l /addtg`, удержание неавторизованных на auth, 2FA, защита от перебора |
 | Бот | `elytrix-bot/` | Python (aiogram 3): `/link <код>`, `/unlink`, кнопки «Войти / Отклонить» при 2FA |
-| БД | MariaDB (ставится скриптом) | таблицы `players`, `pending_links`, `login_requests` создаются плагином сами при старте |
+| БД | **встроена в плагин** (HSQLDB embedded) | файл БД в `plugins/ElytrixAuth/db/`, таблицы создаются сами при старте, ничего устанавливать не нужно |
 
 Бот **не ходит в БД**: он общается с плагином по встроенному HTTP API
 (бот «кидает запросы и получает ответы»), поэтому базу наружу открывать не нужно.
 
-## 1. База данных — ОДНА команда
+## 1. База данных — встроена, ничего делать не нужно
 
-На VDS (где NullCordX), от root:
-
-```bash
-bash sql/setup_db.sh          # из папки NullCordX
-# или с указанием пути к plugins:
-bash sql/setup_db.sh /путь/до/plugins
-```
-
-Скрипт сам:
-- поставит MariaDB, если её нет;
-- создаст базу `elytrix`, юзера `elytrix@127.0.0.1` и сгенерирует пароль;
-- создаст/обновит `plugins/ElytrixAuth/config.properties` (впишет `db.password`
-  и сгенерирует `api.secret` — его потом скопируешь в `.env` бота);
-- напечатает, что вписать в `.env` бота и какой порт открыть в firewall.
-
-Таблицы плагин создаёт сам при первом запуске (`CREATE TABLE IF NOT EXISTS`),
-руками schema больше применять не нужно (`sql/schema.sql` — справочник).
+Плагин использует **HSQLDB** (полноценную SQL-БД) во встроенном режиме:
+- файл БД — `plugins/ElytrixAuth/db/elytrix.*`;
+- таблицы `players`, `pending_links`, `login_requests` создаются автоматически при первом запуске;
+- **не нужно ставить MariaDB/MySQL/Postgres, заводить юзеров и пароли БД, открывать порты**.
 
 ## 2. Плагин (в plugins/ NullCordX)
 
 1. Положить `elytrixauth-plugin/dist/ElytrixAuth-1.0.0.jar` в папку `plugins/` прокси.
-2. Перезапустить NullCordX → создастся `plugins/ElytrixAuth/config.properties`.
-3. Заполнить в нём `db.*` (для плагина юзер `elytrix`@127.0.0.1),
-   `auth.server` (имя auth-сервера из config.yml прокси) и `target.server`
-   (куда переводить после входа, у тебя `grief`).
-4. Перезапустить прокси ещё раз.
+2. Перезапустить NullCordX → создастся `plugins/ElytrixAuth/config.properties`
+   (и в `db/` — файл встроенной БД).
+3. Проверить в `config.properties`: `auth.server` (имя auth-сервера из config.yml прокси)
+   и `target.server` (куда переводить после входа, у тебя `grief`). Пароли/БД настраивать **не нужно**.
+4. Если `api.secret` пуст — он сгенерируется сам, значение напечатается в консоль
+   (нужно для бота). Перезапустить прокси ещё раз.
 
 Обязательные настройки прокси/бэкенда (уже сделаны у тебя):
 - NullCordX: `online_mode: false`, `forwarding_mode` + совпадающий секрет;
@@ -91,10 +79,13 @@ cp .env.example .env   # заполнить BOT_TOKEN, API_BASE, API_KEY
 На Pterodactyl: egg `Python`, стартовая команда `python main.py`, переменные —
 в разделе Environment: `BOT_TOKEN` (от @BotFather), `API_BASE=http://IP_ТВОЕГО_VDS:8754`
 и `API_KEY` — **тот же, что `api.secret` в `config.properties` плагина**
-(его печатает `setup_db.sh`).
+(его печатает плагин в консоль при старте).
 
 Внешний доступ к боту **не нужен**: он сам ходит в Telegram (long-polling) и к HTTP API плагина.
 В firewall VDS открой порт `8754` хотя бы для IP хостинга бота:
+```bash
+ufw allow from <IP_ХОСТИНГА_БОТА> to any port 8754 proto tcp
+```
 
 ### Пользовательский сценарий
 
@@ -108,9 +99,10 @@ cp .env.example .env   # заполнить BOT_TOKEN, API_BASE, API_KEY
 
 ```bash
 cd elytrixauth-plugin
-# положить lib/mariadb-java-client.jar (см. build.sh) и выполнить:
+# hsqldb.jar (встроенная БД) уже в lib/. Если его нет — скачай HSQLDB
+# (jar org.hsqldb:hsqldb) и положи в lib/hsqldb.jar.
 ./build.sh          # нужен JDK 17+; JAVAC=... ./build.sh, если javac не в PATH
-# результат: dist/ElytrixAuth-1.0.0.jar
+# результат: dist/ElytrixAuth-1.0.0.jar (HSQLDB вшита внутрь)
 ```
 
 Стабы Bungee API в `elytrixauth-plugin/stubs/` нужны только для компиляции

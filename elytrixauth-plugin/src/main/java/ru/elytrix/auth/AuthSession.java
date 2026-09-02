@@ -22,7 +22,7 @@ public final class AuthSession {
     /** id строки login_requests для 2FA (-1 = нет). */
     public volatile long requestId = -1;
     /** id строки pending_links для /addtg (-1 = нет). */
-    public volatile int linkId = -1;
+    public volatile long linkId = -1;
     /** последний сгенерированный код привязки. */
     public volatile String linkCode = null;
 

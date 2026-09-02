@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Сборка ElytrixAuth.jar из исходников.
-# Нужен JDK 17+ (javac). Готовый jar появится в dist/ElytrixAuth-<version>.jar
+# Сборка ElytrixAuth.jar из исходников. Нужен JDK 17+ (javac).
+# Derby (встроенная БД) уже лежит в lib/ и вшивается в jar.
+# Результат: dist/ElytrixAuth-<version>.jar
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
@@ -8,16 +9,8 @@ ROOT="$(pwd)"
 JAVAC="${JAVAC:-javac}"
 JAR="${JAR:-jar}"
 VERSION="1.0.0"
-DRIVER_JAR="${MARIADB_JAR:-$ROOT/lib/mariadb-java-client.jar}"
 
-if [ ! -f "$DRIVER_JAR" ]; then
-    echo "!!! Не найден MariaDB JDBC-драйвер: $DRIVER_JAR"
-    echo "    Скачай mariadb-java-client (https://mvnrepository.com/artifact/org.mariadb.jdbc/mariadb-java-client),"
-    echo "    положи в elytrixauth-plugin/lib/mariadb-java-client.jar и повтори."
-    exit 1
-fi
-
-# 1) стабы Bungee API (compile-only) + исходники плагина -> классы
+# 1) исходники плагина (compile-only стабы Bungee API в stubs/) -> классы
 rm -rf build/classes build/jar-merge
 mkdir -p build/classes build/jar-merge
 # shellcheck disable=SC2046
@@ -29,11 +22,16 @@ mkdir -p build/classes build/jar-merge
 # 2) ресурсы (bungee.yml, config.properties)
 cp -r src/main/resources/* build/classes/
 
-# 3) вшиваем MariaDB JDBC-драйвер в jar (shade)
-rm -rf /tmp/elytrix-mariadb-extract
-mkdir -p /tmp/elytrix-mariadb-extract
-( cd /tmp/elytrix-mariadb-extract && "$JAR" --extract --file "$DRIVER_JAR" )
-cp -r /tmp/elytrix-mariadb-extract/* build/jar-merge/
+# 3) вшиваем HSQLDB (встроенная БД) в jar
+if [ ! -f "$ROOT/lib/hsqldb.jar" ]; then
+    echo "!!! Нет $ROOT/lib/hsqldb.jar — положи hsqldb.jar в lib/ (см. README)."
+    exit 1
+fi
+rm -rf /tmp/elytrix-hsqldb-extract
+mkdir -p /tmp/elytrix-hsqldb-extract
+( cd /tmp/elytrix-hsqldb-extract && "$JAR" --extract --file "$ROOT/lib/hsqldb.jar" )
+rm -f /tmp/elytrix-hsqldb-extract/module-info.class
+cp -r /tmp/elytrix-hsqldb-extract/* build/jar-merge/
 
 # 4) классы плагина + ресурсы
 cp -r build/classes/* build/jar-merge/

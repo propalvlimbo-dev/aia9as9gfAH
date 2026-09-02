@@ -33,15 +33,14 @@ public final class CmdAddTg extends Command {
         }
 
         try {
-            int linkId = plugin.db().createPendingLink(
+            long linkId = plugin.db().createPendingLink(
                     s.uuid, plugin.cfg().linkTtl(), ElytrixAuthPlugin.now());
-            s.linkId = linkId;
-            // код нужен боту: вернём его из БД по id
-            String code = fetchCode(linkId);
+            String code = plugin.db().linkCode(linkId);
             if (code == null) {
                 p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка генерации кода, попробуй ещё раз.");
                 return;
             }
+            s.linkId = linkId;
             s.linkCode = code;
             p.sendMessage("§eПривязка Telegram:");
             p.sendMessage("§71) Напиши боту сервера в Telegram.");
@@ -50,15 +49,6 @@ public final class CmdAddTg extends Command {
         } catch (SQLException e) {
             p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка базы данных, попробуй ещё раз.");
             plugin.getLogger().severe("createPendingLink error: " + e.getMessage());
-        }
-    }
-
-    private String fetchCode(int linkId) {
-        try {
-            return plugin.db().linkCode(linkId);
-        } catch (SQLException e) {
-            plugin.getLogger().severe("linkCode error: " + e.getMessage());
-            return null;
         }
     }
 }

@@ -7,6 +7,8 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.SecureRandom;
+import java.util.List;
 import java.util.Properties;
 
 /** Конфигурация ElytrixAuth (config.properties, UTF-8, key=value). */
@@ -47,6 +49,49 @@ public final class PluginConfig {
         }
     }
 
+    /**
+     * Гарантирует, что в конфиге есть api.secret (генерирует, если CHANGE_ME/пусто).
+     * @return актуальный секрет.
+     */
+    public static String ensureApiSecret(File file) {
+        String secret = null;
+        try {
+            PluginConfig cfg = new PluginConfig(file);
+            String cur = cfg.get("api.secret", "CHANGE_ME");
+            if (cur != null && !cur.isEmpty() && !"CHANGE_ME".equals(cur)) {
+                return cur;
+            }
+            byte[] rnd = new byte[24];
+            new SecureRandom().nextBytes(rnd);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : rnd) {
+                sb.append(String.format("%02x", b));
+            }
+            secret = sb.toString();
+        } catch (IOException e) {
+            return null;
+        }
+        // переписываем строку api.secret (или добавляем в конец)
+        try {
+            List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                if (lines.get(i).startsWith("api.secret=")) {
+                    lines.set(i, "api.secret=" + secret);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                lines.add("api.secret=" + secret);
+            }
+            Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return null;
+        }
+        return secret;
+    }
+
     private String get(String key, String def) {
         String v = props.getProperty(key);
         return (v == null || v.trim().isEmpty()) ? def : v.trim();
@@ -60,15 +105,6 @@ public final class PluginConfig {
         }
     }
 
-    public String dbHost()       { return get("db.host", "127.0.0.1"); }
-    public int    dbPort()       { return getInt("db.port", 3306); }
-    public String dbName()       { return get("db.name", "elytrix"); }
-    public String dbUser()       { return get("db.user", "elytrix"); }
-    public String dbPassword()   { return get("db.password", ""); }
-    public int    dbPoolSize()   { return Math.max(1, getInt("db.pool.size", 4)); }
-    public int    dbConnTimeout(){ return getInt("db.connect.timeout.ms", 3000); }
-    public int    dbSockTimeout(){ return getInt("db.socket.timeout.ms", 5000); }
-
     public String authServer()   { return get("auth.server", "auth"); }
     public String targetServer() { return get("target.server", "grief"); }
 
@@ -81,6 +117,6 @@ public final class PluginConfig {
     public int    login2faTtl()  { return getInt("login2fa.ttl.seconds", 90); }
 
     public int    apiPort()      { return getInt("api.port", 8754); }
-    public String apiSecret()    { return get("api.secret", "CHANGE_ME"); }
+    public String apiSecret()    { return get("api.secret", ""); }
     public String apiBind()      { return get("api.bind", "0.0.0.0"); }
 }

@@ -44,8 +44,9 @@ public final class ElytrixAuthPlugin extends Plugin {
         instance = this;
 
         File dataFolder = getDataFolder();
-        if (!dataFolder.exists()) {
-            dataFolder.mkdirs();
+        if (!dataFolder.exists() && !dataFolder.mkdirs()) {
+            getLogger().severe("Не удалось создать папку плагина: " + dataFolder);
+            return;
         }
         File configFile = new File(dataFolder, "config.properties");
         PluginConfig.saveDefaultConfig(configFile);
@@ -57,16 +58,12 @@ public final class ElytrixAuthPlugin extends Plugin {
             return;
         }
 
-        if ("CHANGE_ME".equals(cfg.dbPassword())) {
-            getLogger().severe("config.properties: db.password = CHANGE_ME — задай пароль от MariaDB!");
-            return;
-        }
-
+        // Встраиваемая БД (Derby): файл в папке плагина, сервер БД не нужен
         try {
-            db = new Database(cfg, getLogger());
-            getLogger().info("Подключение к MariaDB установлено.");
+            db = new Database(dataFolder, getLogger());
+            getLogger().info("Встроенная БД готова (таблицы созданы).");
         } catch (SQLException e) {
-            getLogger().log(Level.SEVERE, "Не удалось подключиться к MariaDB: " + e.getMessage(), e);
+            getLogger().log(Level.SEVERE, "Не удалось инициализировать встроенную БД: " + e.getMessage(), e);
             return;
         }
 
@@ -86,6 +83,14 @@ public final class ElytrixAuthPlugin extends Plugin {
         executor.scheduleWithFixedDelay(this::tick, 500, 500, TimeUnit.MILLISECONDS);
 
         // HTTP API для Telegram-бота
+        String apiSecret = cfg.apiSecret();
+        if (apiSecret == null || apiSecret.isEmpty() || "CHANGE_ME".equals(apiSecret)) {
+            apiSecret = PluginConfig.ensureApiSecret(configFile);
+            try {
+                cfg = new PluginConfig(configFile); // перечитываем
+            } catch (Exception ignored) {
+            }
+        }
         api = new ApiServer(cfg, db, getLogger());
         try {
             api.start();
@@ -93,13 +98,9 @@ public final class ElytrixAuthPlugin extends Plugin {
             getLogger().log(Level.SEVERE, "Не удалось запустить HTTP API на порту "
                     + cfg.apiPort() + ": " + e.getMessage(), e);
         }
-        if (cfg.apiSecret() == null || cfg.apiSecret().isEmpty() || "CHANGE_ME".equals(cfg.apiSecret())) {
-            getLogger().warning("api.secret = CHANGE_ME — бот не сможет подключиться. Задай секрет в config.properties "
-                    + "и такой же API_KEY у бота.");
-        }
-
         getLogger().info("ElytrixAuth включён. auth=" + cfg.authServer()
                 + ", target=" + cfg.targetServer());
+        getLogger().info("API-секрет для бота (в .env бота API_KEY): " + cfg.apiSecret());
     }
 
     @Override
