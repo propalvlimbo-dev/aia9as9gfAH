@@ -1,0 +1,16 @@
+# Java
+elytrixauth-plugin/build/
+elytrixauth-plugin/*.jar
+
+# Python
+elytrix-bot/.venv/
+elytrix-bot/.env
+__pycache__/
+*.pyc
+
+# Прочее
+.DS_Store
+*.log
+
+# Локальный драйвер (скачивается при сборке)
+elytrixauth-plugin/lib/

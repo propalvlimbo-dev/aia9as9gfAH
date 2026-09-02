@@ -1,0 +1,18 @@
+name: ElytrixAuth
+main: ru.elytrix.auth.ElytrixAuthPlugin
+version: 1.0.0
+author: Elytrix
+description: Авторизация на прокси (register/login + 2FA Telegram + привязка /addtg)
+depends: []
+
+commands:
+  register:
+    aliases: [reg]
+  login:
+    aliases: [l]
+  addtg: {}
+
+permissions:
+  elytrixauth.admin:
+    description: Доступ к админ-командам ElytrixAuth
+    default: false
