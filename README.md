@@ -18,34 +18,30 @@
 |---|---|---|
 | Плагин | `elytrixauth-plugin/dist/ElytrixAuth-1.0.0.jar` | Java (Bungee API): команды `/reg /register /login /l /addtg`, удержание неавторизованных на auth, 2FA, защита от перебора |
 | Бот | `elytrix-bot/` | Python (aiogram 3): `/link <код>`, `/unlink`, кнопки «Войти / Отклонить» при 2FA |
-| БД | `sql/schema.sql` | MariaDB, общая для плагина и бота |
+| БД | MariaDB (ставится скриптом) | таблицы `players`, `pending_links`, `login_requests` создаются плагином сами при старте |
 
-Плагин и бот **не знают друг о друге напрямую** — общаются только через таблицы
-`players`, `pending_links`, `login_requests`.
+Бот **не ходит в БД**: он общается с плагином по встроенному HTTP API
+(бот «кидает запросы и получает ответы»), поэтому базу наружу открывать не нужно.
 
-## 1. База данных (на VPS с NullCordX)
+## 1. База данных — ОДНА команда
 
-**Самый простой способ — один скрипт** (ставит MariaDB, если нет, создаёт базу и юзера):
+На VDS (где NullCordX), от root:
 
 ```bash
-cd elytrixauth-plugin  # или любая папка с этим репозиторием
-bash sql/setup_db.sh   # от root; спросит пароль
+bash sql/setup_db.sh          # из папки NullCordX
+# или с указанием пути к plugins:
+bash sql/setup_db.sh /путь/до/plugins
 ```
 
-Либо вручную: создать базу и юзера (таблицы плагин создаст сам при старте):
+Скрипт сам:
+- поставит MariaDB, если её нет;
+- создаст базу `elytrix`, юзера `elytrix@127.0.0.1` и сгенерирует пароль;
+- создаст/обновит `plugins/ElytrixAuth/config.properties` (впишет `db.password`
+  и сгенерирует `api.secret` — его потом скопируешь в `.env` бота);
+- напечатает, что вписать в `.env` бота и какой порт открыть в firewall.
 
-```sql
-CREATE DATABASE IF NOT EXISTS elytrix CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'elytrix'@'127.0.0.1' IDENTIFIED BY 'ПАРОЛЬ';
-GRANT ALL PRIVILEGES ON elytrix.* TO 'elytrix'@'127.0.0.1';
-FLUSH PRIVILEGES;
-```
-
-> Полная схема (3 таблицы) — в `sql/schema.sql`, но она **не обязательна**:
-> `players`, `pending_links`, `login_requests` создаются автоматически.
-> Время в БД — epoch-секунды (BIGINT), чтобы Java и Python не зависели от таймзон.
-
-Юзера для бота (`elytrix_bot`, удалённый доступ с IP хостинга бота) создадим, когда дойдём до бота.
+Таблицы плагин создаёт сам при первом запуске (`CREATE TABLE IF NOT EXISTS`),
+руками schema больше применять не нужно (`sql/schema.sql` — справочник).
 
 ## 2. Плагин (в plugins/ NullCordX)
 
@@ -88,13 +84,17 @@ FLUSH PRIVILEGES;
 cd elytrix-bot
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env   # заполнить BOT_TOKEN и DB_*
+cp .env.example .env   # заполнить BOT_TOKEN, API_BASE, API_KEY
 .venv/bin/python main.py
 ```
 
 На Pterodactyl: egg `Python`, стартовая команда `python main.py`, переменные —
-в разделе Environment (токен @BotFather, параметры БД). Внешний доступ к боту **не нужен**:
-он сам ходит в Telegram (long-polling) и к MariaDB.
+в разделе Environment: `BOT_TOKEN` (от @BotFather), `API_BASE=http://IP_ТВОЕГО_VDS:8754`
+и `API_KEY` — **тот же, что `api.secret` в `config.properties` плагина**
+(его печатает `setup_db.sh`).
+
+Внешний доступ к боту **не нужен**: он сам ходит в Telegram (long-polling) и к HTTP API плагина.
+В firewall VDS открой порт `8754` хотя бы для IP хостинга бота:
 
 ### Пользовательский сценарий
 

@@ -406,4 +406,130 @@ public final class Database {
             return "not_found";
         }
     }
+
+    // ---------------- HTTP API для бота ----------------
+
+    /** Запись для бота: ожидающий 2FA-запрос входа. */
+    public static final class PendingRequest {
+        public final long id;
+        public final String playerUuid;
+        public final String nickname;
+        public final String ip;
+        public final long tgId;
+
+        PendingRequest(long id, String playerUuid, String nickname, String ip, long tgId) {
+            this.id = id;
+            this.playerUuid = playerUuid;
+            this.nickname = nickname;
+            this.ip = ip;
+            this.tgId = tgId;
+        }
+    }
+
+    /** Список ожидающих подтверждения 2FA-запросов (для бота), только с привязкой TG. */
+    public java.util.List<PendingRequest> listPendingRequests(long now) throws SQLException {
+        return withConn(c -> {
+            java.util.List<PendingRequest> out = new java.util.ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT lr.id, lr.player_uuid, lr.nickname, lr.ip, p.tg_id "
+                            + "FROM login_requests lr JOIN players p ON p.uuid = lr.player_uuid "
+                            + "WHERE lr.status = 'pending' AND lr.expires_ts > ? AND p.tg_id IS NOT NULL "
+                            + "ORDER BY lr.id ASC LIMIT 50")) {
+                ps.setLong(1, now);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new PendingRequest(
+                                rs.getLong("id"),
+                                rs.getString("player_uuid"),
+                                rs.getString("nickname"),
+                                rs.getString("ip"),
+                                rs.getLong("tg_id")));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** Бот подтвердил/отклонил вход. true — если запрос был живой и обновлён. */
+    public boolean resolveLoginRequest(long id, String status) throws SQLException {
+        Boolean res = withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE login_requests SET status = ? WHERE id = ? "
+                            + "AND status IN ('pending','notified') AND expires_ts >= ?")) {
+                ps.setString(1, status);
+                ps.setLong(2, id);
+                ps.setLong(3, System.currentTimeMillis() / 1000L);
+                return ps.executeUpdate() == 1;
+            }
+        });
+        return Boolean.TRUE.equals(res);
+    }
+
+    /**
+     * Привязка Telegram по коду из /addtg (вызывается HTTP API бота).
+     * @return ник игрока при успехе, null если код неверный/истёк/уже использован.
+     */
+    public String linkByCode(String code, long tgId, long now) throws SQLException {
+        return withConn(c -> {
+            try {
+                c.setAutoCommit(false);
+                // 1) "занимаем" код (только open и не истёкший)
+                String playerUuid;
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE pending_links SET status = 'bound' "
+                                + "WHERE code = ? AND status = 'open' AND expires_ts >= ?")) {
+                    ps.setString(1, code);
+                    ps.setLong(2, now);
+                    if (ps.executeUpdate() != 1) {
+                        c.rollback();
+                        return null;
+                    }
+                }
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT player_uuid FROM pending_links WHERE code = ? AND status = 'bound'")) {
+                    ps.setString(1, code);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            c.rollback();
+                            return null;
+                        }
+                        playerUuid = rs.getString("player_uuid");
+                    }
+                }
+                // 2) пишем tg_id игроку
+                String nickname;
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE players SET tg_id = ? WHERE uuid = ?")) {
+                    ps.setLong(1, tgId);
+                    ps.setString(2, playerUuid);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT nickname FROM players WHERE uuid = ?")) {
+                    ps.setString(1, playerUuid);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            c.rollback();
+                            return null;
+                        }
+                        nickname = rs.getString("nickname");
+                    }
+                }
+                c.commit();
+                return nickname;
+            } catch (SQLException e) {
+                try {
+                    c.rollback();
+                } catch (SQLException ignored) {
+                }
+                throw e;
+            } finally {
+                try {
+                    c.setAutoCommit(true);
+                } catch (SQLException ignored) {
+                }
+            }
+        });
+    }
 }

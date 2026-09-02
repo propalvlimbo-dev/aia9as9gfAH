@@ -79,4 +79,8 @@ public final class PluginConfig {
 
     public int    linkTtl()      { return getInt("link.code.ttl.seconds", 300); }
     public int    login2faTtl()  { return getInt("login2fa.ttl.seconds", 90); }
+
+    public int    apiPort()      { return getInt("api.port", 8754); }
+    public String apiSecret()    { return get("api.secret", "CHANGE_ME"); }
+    public String apiBind()      { return get("api.bind", "0.0.0.0"); }
 }

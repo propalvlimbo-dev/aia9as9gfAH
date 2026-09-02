@@ -7,6 +7,7 @@ import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.api.plugin.PluginManager;
 
 import java.io.File;
+import java.io.IOException;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +31,7 @@ public final class ElytrixAuthPlugin extends Plugin {
 
     private PluginConfig cfg;
     private Database db;
+    private ApiServer api;
     private ScheduledExecutorService executor;
 
     private final Map<UUID, AuthSession> sessions = new ConcurrentHashMap<>();
@@ -83,6 +85,19 @@ public final class ElytrixAuthPlugin extends Plugin {
         // тик каждые 500 мс: кики по таймеру, опрос 2FA и статуса привязки
         executor.scheduleWithFixedDelay(this::tick, 500, 500, TimeUnit.MILLISECONDS);
 
+        // HTTP API для Telegram-бота
+        api = new ApiServer(cfg, db, getLogger());
+        try {
+            api.start();
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Не удалось запустить HTTP API на порту "
+                    + cfg.apiPort() + ": " + e.getMessage(), e);
+        }
+        if (cfg.apiSecret() == null || cfg.apiSecret().isEmpty() || "CHANGE_ME".equals(cfg.apiSecret())) {
+            getLogger().warning("api.secret = CHANGE_ME — бот не сможет подключиться. Задай секрет в config.properties "
+                    + "и такой же API_KEY у бота.");
+        }
+
         getLogger().info("ElytrixAuth включён. auth=" + cfg.authServer()
                 + ", target=" + cfg.targetServer());
     }
@@ -91,6 +106,9 @@ public final class ElytrixAuthPlugin extends Plugin {
     public void onDisable() {
         if (executor != null) {
             executor.shutdownNow();
+        }
+        if (api != null) {
+            api.stop();
         }
         if (db != null) {
             db.close();

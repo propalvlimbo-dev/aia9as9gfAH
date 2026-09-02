@@ -24,13 +24,11 @@ def _env(key: str, default: str = "") -> str:
 class Config:
     BOT_TOKEN: str = _env("BOT_TOKEN")
 
-    DB_HOST: str = _env("DB_HOST", "127.0.0.1")
-    DB_PORT: int = int(_env("DB_PORT", "3306"))
-    DB_NAME: str = _env("DB_NAME", "elytrix")
-    DB_USER: str = _env("DB_USER", "elytrix_bot")
-    DB_PASSWORD: str = _env("DB_PASSWORD")
+    # HTTP API плагина ElytrixAuth (бот НЕ ходит в БД)
+    API_BASE: str = _env("API_BASE", "http://127.0.0.1:8754").rstrip("/")
+    API_KEY: str = _env("API_KEY")
 
-    # Как часто бот опрашивает БД на новые запросы входа (сек)
+    # Как часто опрашивать плагин на новые запросы входа (сек)
     POLL_INTERVAL: float = float(_env("POLL_INTERVAL", "2.0"))
 
     @classmethod
@@ -38,6 +36,6 @@ class Config:
         problems: list[str] = []
         if not cls.BOT_TOKEN:
             problems.append("BOT_TOKEN не задан")
-        if not cls.DB_PASSWORD:
-            problems.append("DB_PASSWORD не задан")
+        if not cls.API_KEY:
+            problems.append("API_KEY не задан (тот же, что api.secret в config.properties плагина)")
         return problems

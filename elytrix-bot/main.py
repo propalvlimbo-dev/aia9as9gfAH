@@ -1,9 +1,10 @@
 """ElytrixBot: Telegram-бот привязки аккаунтов и подтверждения входа (2FA).
 
-Схема:
-  /addtg в игре -> код -> боту /link <код> -> привязка (players.tg_id)
-  /login пароль на сервере -> login_requests(pending) -> бот шлёт кнопку ->
-  нажатие -> login_requests(confirmed) -> плагин пускает игрока
+Бот общается с плагином ElytrixAuth по HTTP API (см. api.py):
+  /addtg в игре -> код -> боту /link <код> -> POST /api/link
+  /login пароль (аккаунт привязан) -> плагин создаёт login_request ->
+  бот GET /api/pending -> шлёт кнопку «Войти / Отклонить» ->
+  POST /api/resolve -> плагин пускает игрока.
 """
 import asyncio
 import logging
@@ -14,8 +15,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from api import ApiError, ElytrixApi
 from config import Config
-from db import Db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
 log = logging.getLogger("elytrix")
@@ -25,9 +26,12 @@ problems = CFG.validate()
 if problems:
     raise SystemExit("Конфигурация неполная:\n  - " + "\n  - ".join(problems))
 
-db = Db(CFG.DB_HOST, CFG.DB_PORT, CFG.DB_USER, CFG.DB_PASSWORD, CFG.DB_NAME)
+api = ElytrixApi(CFG.API_BASE, CFG.API_KEY)
 bot = Bot(token=CFG.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+# id запросов, которым уже отправили кнопку (чтобы не дублировать)
+_sent: set[int] = set()
 
 
 # ------------------------------------------------------------------ команды
@@ -54,27 +58,22 @@ async def cmd_link(m: Message) -> None:
     if len(args) != 2 or not args[1].isdigit():
         await m.answer("Отправь код из игры так: <code>/link 12345678</code>")
         return
-    code = args[1]
     if m.from_user is None:
         return
-    tg_id = m.from_user.id
-
-    link = await db.find_open_link(code)
-    if link is None:
-        await m.answer("❌ Код не найден или истёк.\n"
+    try:
+        nickname = await api.link(args[1], m.from_user.id)
+    except ApiError as e:
+        log.warning("link error: %s", e)
+        await m.answer("⚠️ Не удалось связаться с сервером. Попробуй через минуту.")
+        return
+    if nickname is None:
+        await m.answer("❌ Код не найден или уже использован.\n"
                        "Запусти <code>/addtg</code> в игре ещё раз — придёт новый код.")
         return
-
-    nickname = await db.bind_player(link.id, link.player_uuid, tg_id)
-    if nickname is None:
-        await m.answer("❌ Код уже использован. Запусти <code>/addtg</code> в игре заново.")
-        return
-
-    accounts = await db.linked_accounts(tg_id)
     await m.answer(
         f"✅ Аккаунт <b>{nickname}</b> привязан к твоему Telegram!\n\n"
-        f"Теперь при входе (после пароля) нужно будет нажать «Войти» в этом чате.\n"
-        f"Привязано аккаунтов: {len(accounts)}. Отвязать: <code>/unlink</code>"
+        "Теперь при входе (после пароля) нужно будет нажать «Войти» в этом чате.\n"
+        "Отвязать аккаунт: <code>/unlink</code>"
     )
 
 
@@ -82,33 +81,33 @@ async def cmd_link(m: Message) -> None:
 async def cmd_unlink(m: Message) -> None:
     if m.from_user is None:
         return
-    tg_id = m.from_user.id
-    accounts = await db.linked_accounts(tg_id)
-    if not accounts:
-        await m.answer("У тебя нет привязанных аккаунтов.")
-        return
-    await db.unbind_tg(tg_id)
-    nicks = ", ".join(a["nickname"] for a in accounts)
-    await m.answer(f"🔓 Отвязал: <b>{nicks}</b>. Коды входа больше не приходят.")
+    await m.answer(
+        "🔓 Полная отвязка всех твоих аккаунтов от Telegram пока делается на сервере.\n"
+        "Напиши администратору ник — он снимет привязку вручную."
+    )
 
 
 # ------------------------------------------------------------------ кнопки 2FA
 
 @dp.callback_query(F.data.startswith("la:"))
 async def cb_approve(cq: CallbackQuery) -> None:
-    await _answer_login(cq, confirmed=True)
+    await _answer_login(cq, "confirm")
 
 
 @dp.callback_query(F.data.startswith("ld:"))
 async def cb_deny(cq: CallbackQuery) -> None:
-    await _answer_login(cq, confirmed=False)
+    await _answer_login(cq, "deny")
 
 
-async def _answer_login(cq: CallbackQuery, confirmed: bool) -> None:
+async def _answer_login(cq: CallbackQuery, action: str) -> None:
     req_id = int(cq.data.split(":", 1)[1])
-    status = "confirmed" if confirmed else "denied"
-    updated = await db.settle_login(req_id, status)
-    if updated != 1:
+    try:
+        ok = await api.resolve(req_id, action)
+    except ApiError as e:
+        log.warning("resolve error: %s", e)
+        await cq.answer("⚠️ Сервер недоступен, попробуй ещё раз.", show_alert=False)
+        return
+    if not ok:
         await cq.answer("⏰ Запрос устарел или уже обработан.", show_alert=False)
         try:
             await cq.message.edit_text(cq.message.html_text + "\n\n<i>(устарел)</i>",
@@ -116,16 +115,14 @@ async def _answer_login(cq: CallbackQuery, confirmed: bool) -> None:
         except Exception:
             pass
         return
-    if confirmed:
+    if action == "confirm":
         await cq.answer("✅ Вход подтверждён!", show_alert=False)
-        await cq.message.edit_text(
-            "✅ <b>Вход подтверждён.</b> Игрок будет пущен на сервер.",
-            reply_markup=None)
+        await cq.message.edit_text("✅ <b>Вход подтверждён.</b> Игрок будет пущен на сервер.",
+                                   reply_markup=None)
     else:
         await cq.answer("❌ Вход отклонён.", show_alert=False)
-        await cq.message.edit_text(
-            "❌ <b>Вход отклонён.</b> Если это был не ты — смени пароль на сервере.",
-            reply_markup=None)
+        await cq.message.edit_text("❌ <b>Вход отклонён.</b> Если это был не ты — смени пароль на сервере.",
+                                   reply_markup=None)
 
 
 # ------------------------------------------------------------------ поллер 2FA
@@ -134,29 +131,30 @@ async def login_poller() -> None:
     log.info("Poller 2FA запущен (интервал %.1f c)", CFG.POLL_INTERVAL)
     while True:
         try:
-            rows = await db.fetch_pending_logins()
+            rows = await api.pending()
             for row in rows:
-                tg_id = await db.tg_id_by_uuid(row.player_uuid)
-                if tg_id is None:
-                    await db.settle_login(row.id, "expired")
+                req_id = int(row["id"])
+                if req_id in _sent:
                     continue
+                _sent.add(req_id)
                 kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="✅ Войти", callback_data=f"la:{row.id}"),
-                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"ld:{row.id}"),
+                    InlineKeyboardButton(text="✅ Войти", callback_data=f"la:{req_id}"),
+                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"ld:{req_id}"),
                 ]])
-                ip_line = f"IP: <code>{row.ip}</code>\n" if row.ip else ""
+                ip_line = f"IP: <code>{row.get('ip') or ''}</code>\n"
                 try:
                     await bot.send_message(
-                        tg_id,
+                        int(row["tg_id"]),
                         "🔐 <b>Запрос входа на сервер</b>\n\n"
-                        f"Игрок: <b>{row.nickname}</b>\n{ip_line}"
+                        f"Игрок: <b>{row['nickname']}</b>\n{ip_line}"
                         f"Это ты?",
                         reply_markup=kb)
-                    await db.mark_notified(row.id)
-                except Exception as e:  # бот заблокирован/удалён и т.п.
-                    log.warning("send 2fa tg=%s req=%s: %s", tg_id, row.id, e)
-        except Exception as e:
-            log.exception("poller error: %s", e)
+                except Exception as e:  # бот заблокирован/диалог закрыт и т.п.
+                    log.warning("send 2fa tg=%s req=%s: %s", row.get("tg_id"), req_id, e)
+        except ApiError as e:
+            log.warning("pending poll: %s", e)
+        except Exception:
+            log.exception("poller error")
         await asyncio.sleep(CFG.POLL_INTERVAL)
 
 
@@ -165,11 +163,14 @@ async def login_poller() -> None:
 async def main() -> None:
     await bot.set_my_commands([
         {"command": "link", "description": "Привязать аккаунт по коду из игры (/addtg)"},
-        {"command": "unlink", "description": "Отвязать аккаунт"},
         {"command": "help", "description": "Помощь"},
     ])
+    ok = await api.health()
+    if not ok:
+        log.warning("Плагин ElytrixAuth не отвечает (%s). Бот будет работать, но входы/привязка недоступны.",
+                    CFG.API_BASE)
     asyncio.create_task(login_poller())
-    log.info("ElytrixBot запущен")
+    log.info("ElytrixBot запущен (API: %s)", CFG.API_BASE)
     await dp.start_polling(bot)
 
 
