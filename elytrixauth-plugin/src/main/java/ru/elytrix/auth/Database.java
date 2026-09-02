@@ -56,9 +56,50 @@ public final class Database {
         } catch (ClassNotFoundException e) {
             throw new SQLException("mariadb-java-client не вшит в jar плагина", e);
         }
-        // проверка соединения
+        // проверка соединения + автосоздание таблиц (schema не нужна руками)
         try (Connection c = newConnection()) {
             c.isValid(3);
+            ensureSchema(c);
+        }
+    }
+
+    /** Таблицы создаются сами при старте (CREATE TABLE IF NOT EXISTS). */
+    private void ensureSchema(Connection c) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            st.execute("CREATE TABLE IF NOT EXISTS players ("
+                    + " uuid CHAR(36) NOT NULL,"
+                    + " nickname VARCHAR(16) NOT NULL,"
+                    + " password_hash VARCHAR(255) DEFAULT NULL,"
+                    + " tg_id BIGINT DEFAULT NULL,"
+                    + " reg_ip VARCHAR(45) DEFAULT NULL,"
+                    + " reg_ts BIGINT NOT NULL,"
+                    + " last_ip VARCHAR(45) DEFAULT NULL,"
+                    + " last_login_ts BIGINT DEFAULT NULL,"
+                    + " PRIMARY KEY (uuid),"
+                    + " UNIQUE KEY uq_players_nickname (nickname),"
+                    + " KEY idx_players_tg (tg_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            st.execute("CREATE TABLE IF NOT EXISTS pending_links ("
+                    + " id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+                    + " player_uuid CHAR(36) NOT NULL,"
+                    + " code VARCHAR(10) NOT NULL,"
+                    + " status ENUM('open','bound','expired') NOT NULL DEFAULT 'open',"
+                    + " created_ts BIGINT NOT NULL,"
+                    + " expires_ts BIGINT NOT NULL,"
+                    + " KEY idx_links_status (status, expires_ts),"
+                    + " KEY idx_links_code (code)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            st.execute("CREATE TABLE IF NOT EXISTS login_requests ("
+                    + " id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+                    + " player_uuid CHAR(36) NOT NULL,"
+                    + " nickname VARCHAR(16) NOT NULL,"
+                    + " ip VARCHAR(45) DEFAULT NULL,"
+                    + " status ENUM('pending','notified','confirmed','denied','expired') NOT NULL DEFAULT 'pending',"
+                    + " created_ts BIGINT NOT NULL,"
+                    + " expires_ts BIGINT NOT NULL,"
+                    + " KEY idx_requests_status (status, expires_ts),"
+                    + " KEY idx_requests_player (player_uuid)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
         }
     }
 

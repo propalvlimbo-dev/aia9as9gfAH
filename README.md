@@ -25,29 +25,27 @@
 
 ## 1. База данных (на VPS с NullCordX)
 
+**Самый простой способ — один скрипт** (ставит MariaDB, если нет, создаёт базу и юзера):
+
 ```bash
-mysql -u root -p < sql/schema.sql
+cd elytrixauth-plugin  # или любая папка с этим репозиторием
+bash sql/setup_db.sh   # от root; спросит пароль
 ```
 
-Потом создать пользователей (пароли заменить):
+Либо вручную: создать базу и юзера (таблицы плагин создаст сам при старте):
 
 ```sql
--- плагин (localhost)
-CREATE USER 'elytrix'@'127.0.0.1' IDENTIFIED BY 'ПАРОЛЬ_ПЛАГИНА';
-GRANT SELECT,INSERT,UPDATE,DELETE ON elytrix.* TO 'elytrix'@'127.0.0.1';
--- бот (удалённо, IP хостинга бота вместо 1.2.3.4)
-CREATE USER 'elytrix_bot'@'1.2.3.4' IDENTIFIED BY 'ПАРОЛЬ_БОТА';
-GRANT SELECT,INSERT,UPDATE ON elytrix.* TO 'elytrix_bot'@'1.2.3.4';
+CREATE DATABASE IF NOT EXISTS elytrix CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'elytrix'@'127.0.0.1' IDENTIFIED BY 'ПАРОЛЬ';
+GRANT ALL PRIVILEGES ON elytrix.* TO 'elytrix'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 
-MariaDB должна слушать сеть — в `/etc/mysql/mariadb.conf.d/50-server.cnf`:
+> Полная схема (3 таблицы) — в `sql/schema.sql`, но она **не обязательна**:
+> `players`, `pending_links`, `login_requests` создаются автоматически.
+> Время в БД — epoch-секунды (BIGINT), чтобы Java и Python не зависели от таймзон.
 
-```ini
-bind-address = 0.0.0.0
-```
-
-И в firewall открыть TCP 3306 **только** для IP хостинга бота.
+Юзера для бота (`elytrix_bot`, удалённый доступ с IP хостинга бота) создадим, когда дойдём до бота.
 
 ## 2. Плагин (в plugins/ NullCordX)
 
