@@ -27,9 +27,17 @@ public final class CmdLogout extends Command {
         if (s == null) {
             return;
         }
-        if (!s.isAuthed()) {
+        if (s.state == AuthSession.State.WAIT) {
             plugin.messages().chat(p, "logout-not-authed");
             return;
+        }
+        // в ожидании 2FA-кнопки — помечаем запрос отклонённым, чтобы «Войти» в боте не сработал
+        if (s.state == AuthSession.State.TG && s.requestId > -1) {
+            try {
+                plugin.db().resolveLoginRequest(s.requestId, "denied");
+            } catch (SQLException e) {
+                plugin.getLogger().severe("resolveLoginRequest(logout) error: " + e.getMessage());
+            }
         }
         // снимаем сессию в БД (авто-вход больше не сработает) и память
         try {
