@@ -11,7 +11,9 @@ import java.sql.Statement;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -147,6 +149,10 @@ public final class Database {
                     + " status VARCHAR(16) NOT NULL,"
                     + " created_ts BIGINT NOT NULL,"
                     + " expires_ts BIGINT NOT NULL"
+                    + ")");
+            st.execute("CREATE TABLE IF NOT EXISTS ip_bans ("
+                    + " ip VARCHAR(45) PRIMARY KEY,"
+                    + " banned_until BIGINT NOT NULL"
                     + ")");
         }
         // индексы (HSQLDB не понимает IF NOT EXISTS — проверяем через системные таблицы)
@@ -448,6 +454,78 @@ public final class Database {
                 ps.setLong(4, System.currentTimeMillis() / 1000L);
                 ps.setString(5, uuid.toString());
                 ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Сколько аккаунтов зарегистрировано с этого IP (лимит регистраций). */
+    public long countPlayersByRegIp(String ip) {
+        try {
+            return withConn(c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT COUNT(*) FROM players WHERE reg_ip = ?")) {
+                    ps.setString(1, ip);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? rs.getLong(1) : 0L;
+                    }
+                }
+            });
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "countPlayersByRegIp error", e);
+            return -1L; // неизвестно — регистрацию не блокируем
+        }
+    }
+
+    // ---------------- ip_bans (временный бан IP за перебор пароля) ----------------
+
+    /** Все активные баны: ip -> epoch-сек окончания (для памяти плагина при старте). */
+    public Map<String, Long> allIpBans() throws SQLException {
+        return withConn(c -> {
+            Map<String, Long> out = new HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT ip, banned_until FROM ip_bans WHERE banned_until > ?")) {
+                ps.setLong(1, System.currentTimeMillis() / 1000L);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getString("ip"), rs.getLong("banned_until"));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** Забанить IP до until (epoch-сек). Если бан уже длиннее — оставляем старый. */
+    public void addIpBan(String ip, long until) throws SQLException {
+        withConn(c -> {
+            long existing = 0;
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT banned_until FROM ip_bans WHERE ip = ?")) {
+                ps.setString(1, ip);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        existing = rs.getLong("banned_until");
+                    }
+                }
+            }
+            if (existing >= until) {
+                return null; // уже забанен дольше — не укорачиваем
+            }
+            if (existing > 0) {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE ip_bans SET banned_until = ? WHERE ip = ?")) {
+                    ps.setLong(1, until);
+                    ps.setString(2, ip);
+                    ps.executeUpdate();
+                }
+            } else {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "INSERT INTO ip_bans (ip, banned_until) VALUES (?, ?)")) {
+                    ps.setString(1, ip);
+                    ps.setLong(2, until);
+                    ps.executeUpdate();
+                }
             }
             return null;
         });

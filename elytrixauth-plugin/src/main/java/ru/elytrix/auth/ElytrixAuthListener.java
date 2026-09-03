@@ -43,6 +43,31 @@ public final class ElytrixAuthListener implements Listener {
         String ip = p.getAddress() == null ? "?" : p.getAddress().getHostString();
         long now = ElytrixAuthPlugin.now();
 
+        // временный бан IP (перебор пароля): не пускаем даже с активной сессией
+        long banLeft = plugin.ipBanLeftSec(ip);
+        if (banLeft > 0) {
+            plugin.messages().kick(p, "kick-ip-banned",
+                    "time", String.valueOf(Math.max(1, (banLeft + 59) / 60)));
+            return;
+        }
+
+        // анти-мультибокс: не больше online.max.per.ip аккаунтов онлайн с одного IP
+        int maxOnline = plugin.cfg().onlineMaxPerIp();
+        if (maxOnline > 0) {
+            int same = 0;
+            for (ProxiedPlayer o : plugin.proxy().getPlayers()) {
+                if (o == p) {
+                    continue;
+                }
+                String oip = o.getAddress() == null ? null : o.getAddress().getHostString();
+                if (ip.equals(oip) && ++same >= maxOnline) {
+                    plugin.messages().kick(p, "kick-online-ip-limit",
+                            "max", String.valueOf(maxOnline));
+                    return;
+                }
+            }
+        }
+
         Database.PlayerRow row = null;
         try {
             row = plugin.db().findPlayer(p.getName()).orElse(null);

@@ -121,6 +121,17 @@ public final class PluginConfig {
     public int    tryWindow()    { return getInt("failed.window.seconds", 60); }
     public int    minPassword()  { return getInt("min.password.length", 4); }
 
+    // ---- защита от перебора и ботов ----
+    /** После скольких неверных входов с IP — временный бан IP (0 = выключено). */
+    public int    banIpAfterTries() { return getInt("ban.ip.after.tries", 3); }
+    /** Длительность бана IP, минут (0 = выключено). */
+    public int    banIpMinutes()    { return getInt("ban.ip.minutes", 30); }
+    public boolean ipBanEnabled()   { return banIpAfterTries() > 0 && banIpMinutes() > 0; }
+    /** Максимум аккаунтов, которые можно зарегистрировать с одного IP (0 = без лимита). */
+    public int    regMaxPerIp()     { return getInt("reg.max.per.ip", 3); }
+    /** Максимум игроков одновременно онлайн с одного IP (0 = без лимита). */
+    public int    onlineMaxPerIp()  { return getInt("online.max.per.ip", 3); }
+
     public int    linkTtl()      { return getInt("link.code.ttl.seconds", 300); }
     public int    login2faTtl()  { return getInt("login2fa.ttl.seconds", 90); }
 

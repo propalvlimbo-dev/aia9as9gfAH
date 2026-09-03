@@ -47,11 +47,29 @@ public final class CmdRegister extends Command {
             plugin.messages().chat(p, "pass-long", "max", "64");
             return;
         }
+        // простые пароли не принимаем
+        if (args[0].equalsIgnoreCase(s.nickname)) {
+            plugin.messages().chat(p, "pass-like-nick");
+            return;
+        }
+        if (args[0].length() > 1 && allSameChars(args[0])) {
+            plugin.messages().chat(p, "pass-same-chars");
+            return;
+        }
         // аккаунт уже есть — но без пароля (сброс админом) — тогда просто задаём новый
         Database.PlayerRow existing = plugin.db().findPlayer(s.nickname).orElse(null);
         if (existing != null && existing.passwordHash != null) {
             plugin.messages().chat(p, "account-exists");
             return;
+        }
+        // лимит регистраций с одного IP (новый аккаунт; смена пароля не считается)
+        if (existing == null && plugin.cfg().regMaxPerIp() > 0) {
+            long regs = plugin.db().countPlayersByRegIp(s.ip);
+            if (regs >= plugin.cfg().regMaxPerIp()) {
+                plugin.messages().chat(p, "reg-ip-limit",
+                        "max", String.valueOf(plugin.cfg().regMaxPerIp()));
+                return;
+            }
         }
 
         try {
@@ -81,5 +99,16 @@ public final class CmdRegister extends Command {
         plugin.markAuthed(s);
         plugin.messages().chatList(p, "register-ok", "player", s.nickname);
         plugin.connectTarget(p);
+    }
+
+    /** Пароль из одинаковых символов («aaaaaa», «111111») — слишком простой. */
+    private static boolean allSameChars(String v) {
+        char c = v.charAt(0);
+        for (int i = 1; i < v.length(); i++) {
+            if (v.charAt(i) != c) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -58,6 +58,19 @@ public final class CmdLogin extends Command {
         if (!PasswordHash.verify(args[0], row.passwordHash)) {
             plugin.registerFail("nick:" + s.nickname.toLowerCase());
             plugin.registerFail("ip:" + s.ip);
+            // временный бан IP после N неудачных входов (по умолчанию 3)
+            if (plugin.cfg().ipBanEnabled()
+                    && plugin.failCount("ip:" + s.ip) >= plugin.cfg().banIpAfterTries()) {
+                plugin.banIp(s.ip);
+                plugin.messages().kick(p, "kick-ip-banned",
+                        "time", String.valueOf(Math.max(1, plugin.cfg().banIpMinutes())));
+                return;
+            }
+            if (plugin.isFailBlocked("nick:" + s.nickname.toLowerCase())
+                    || plugin.isFailBlocked("ip:" + s.ip)) {
+                plugin.messages().kick(p, "kick-too-many-tries");
+                return;
+            }
             plugin.messages().chat(p, "wrong-password",
                     "left", String.valueOf(plugin.failLeft("ip:" + s.ip)));
             return;

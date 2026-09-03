@@ -38,6 +38,8 @@ public final class ElytrixAuthPlugin extends Plugin {
     private final Map<UUID, AuthSession> sessions = new ConcurrentHashMap<>();
     /** ip/nick -> [попытки, окно_старт_epoch] для лимита неверных паролей. */
     private final Map<String, long[]> failCounters = new ConcurrentHashMap<>();
+    /** ip -> epoch-сек окончания временного бана (за перебор пароля). */
+    private final Map<String, Long> ipBans = new ConcurrentHashMap<>();
     /** ожидающие подтверждения админ-сбросы: ник(lower) -> [kind(0=full,1=pass), expiry_ms]. */
     private final Map<String, long[]> pendingAdminResets = new ConcurrentHashMap<>();
     private boolean authServerMissingLogged = false;
@@ -68,6 +70,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         try {
             db = new Database(dataFolder, cfg, getLogger());
             getLogger().info("Встроенная БД готова: " + cfg.dbFile() + " (таблицы созданы).");
+            loadIpBans();
         } catch (SQLException e) {
             getLogger().log(Level.SEVERE, "Не удалось инициализировать встроенную БД: " + e.getMessage(), e);
             return;
@@ -227,6 +230,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         try {
             db = new Database(dataFolder, cfg, getLogger());
+            loadIpBans();
         } catch (SQLException e) {
             getLogger().log(Level.SEVERE, "reload: не удалось открыть БД: " + e.getMessage(), e);
         }
@@ -603,6 +607,19 @@ public final class ElytrixAuthPlugin extends Plugin {
         failCounters.remove(key);
     }
 
+    /** Текущее число неудачных попыток по ключу (в пределах окна). */
+    public int failCount(String key) {
+        long[] c = failCounters.get(key);
+        if (c == null) {
+            return 0;
+        }
+        if (now() - c[1] > cfg.tryWindow()) {
+            failCounters.remove(key);
+            return 0;
+        }
+        return (int) c[0];
+    }
+
     /** Сколько неверных попыток осталось у ключа (для подсказки в сообщении). */
     public int failLeft(String key) {
         long[] c = failCounters.get(key);
@@ -615,6 +632,51 @@ public final class ElytrixAuthPlugin extends Plugin {
             return cfg.maxTries();
         }
         return Math.max(0, cfg.maxTries() - (int) c[0]);
+    }
+
+    // ------- временный бан IP за перебор пароля -------
+
+    /** Загрузить активные баны из БД (при старте/перезагрузке). */
+    public void loadIpBans() {
+        try {
+            Map<String, Long> bans = db.allIpBans();
+            ipBans.clear();
+            ipBans.putAll(bans);
+            getLogger().info("Временных банов IP активно: " + ipBans.size());
+        } catch (SQLException e) {
+            getLogger().warning("loadIpBans error: " + e.getMessage());
+        }
+    }
+
+    /** Сколько секунд осталось у бана этого IP (0 — не забанен или истёк). */
+    public long ipBanLeftSec(String ip) {
+        Long until = ipBans.get(ip);
+        if (until == null) {
+            return 0;
+        }
+        long left = until - now();
+        if (left <= 0) {
+            ipBans.remove(ip); // срок вышел — бан сам снимается
+            return 0;
+        }
+        return left;
+    }
+
+    /** Забанить IP по настройкам (ban.ip.minutes). true — бан выдан. */
+    public boolean banIp(String ip) {
+        if (!cfg.ipBanEnabled()) {
+            return false;
+        }
+        long until = now() + cfg.banIpMinutes() * 60L;
+        try {
+            db.addIpBan(ip, until);
+        } catch (SQLException e) {
+            getLogger().warning("addIpBan error: " + e.getMessage());
+            return false;
+        }
+        ipBans.put(ip, until);
+        getLogger().warning("IP забанен за перебор пароля: " + ip + " на " + cfg.banIpMinutes() + " мин");
+        return true;
     }
 
     public static long now() {
