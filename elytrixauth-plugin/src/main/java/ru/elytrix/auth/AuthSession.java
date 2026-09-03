@@ -54,6 +54,8 @@ public final class AuthSession {
     public volatile long authedAt = 0;
     /** одноразовая подсказка про /addtg уже показана. */
     public volatile boolean tgHintShown = false;
+    /** первичный вход на сервер в этой сессии — UI/приветствие ещё не показаны. */
+    public volatile boolean joinUiShown = false;
     /** когда в последний раз показывали title (чтобы он не исчезал с экрана). */
     public volatile long lastTitleAt = 0;
 

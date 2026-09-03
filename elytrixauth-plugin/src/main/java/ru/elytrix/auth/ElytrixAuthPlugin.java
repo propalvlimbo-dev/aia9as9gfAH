@@ -185,6 +185,10 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.sessionDropped = false;
         }
         s.lastTitleAt = 0;
+        s.joinUiShown = false;
+        // первое периодическое напоминание — только через ~10 сек после входа,
+        // чтобы не дублировать приветствие при заходе на сервер
+        s.remindAt = System.currentTimeMillis();
         return s;
     }
 
@@ -363,7 +367,11 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         s.barText = null;
         ProxiedPlayer p = getProxy().getPlayer(s.uuid);
-        if (p != null) {
+        // Визуал шлём только когда игрок уже на сервере: для клиентов 1.20.2+
+        // LoginSuccess приходит лишь после подключения к серверу, и пакеты раньше
+        // этого момента ломают вход. При авто-входе (PostLogin) welcome покажет
+        // onServerConnected при заходе на сервер.
+        if (p != null && p.getServer() != null) {
             Visual.clearTitle(p);
             messages().actionbar(p, "actionbar-authed", "player", s.nickname);
         }
@@ -497,6 +505,17 @@ public final class ElytrixAuthPlugin extends Plugin {
             ProxiedPlayer p = getProxy().getPlayer(s.uuid);
             if (p == null || !p.isConnected()) {
                 leave(s.uuid);
+                continue;
+            }
+            if (p.getServer() == null) {
+                // Игрок ещё не заведён ни на один сервер. Для клиентов 1.20.2+
+                // это значит: LoginSuccess ещё НЕ отправлен — клиент в состоянии
+                // LOGIN, и ЛЮБЫЕ пакеты UI (чат/actionbar/title/bossbar) сейчас
+                // сломают вход ("login_disconnect ... extra bytes"). Разрешён
+                // только кик по таймауту (login-кик — штатный пакет этой фазы).
+                if (s.deadline > 0 && now >= s.deadline) {
+                    messages().kick(p, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
+                }
                 continue;
             }
             switch (s.state) {

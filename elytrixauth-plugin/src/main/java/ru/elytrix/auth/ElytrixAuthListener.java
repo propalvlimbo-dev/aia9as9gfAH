@@ -81,6 +81,15 @@ public final class ElytrixAuthListener implements Listener {
         AuthSession s = plugin.join(p.getUniqueId(), p.getName(), ip);
         s.totalSec = plugin.cfg().loginTimeout();
 
+        // ВАЖНО: сюда игроку НЕЛЬЗЯ слать ни одного пакета (чат/title/actionbar/
+        // bossbar). Для клиентов 1.20.2+ прокси отправляет LoginSuccess только в
+        // конце подключения к первому серверу (ServerConnector.cutThrough), т.е.
+        // в PostLogin клиент всё ещё в состоянии LOGIN — пакеты UI в этом окне
+        // ломают вход ("login_disconnect ... was larger than I expected").
+        // Все приветствия/подсказки показываем в onServerConnected (клиент уже
+        // в PLAY). Здесь — только состояние и БД (кики-дисконнекты допустимы:
+        // login-кик — штатный пакет фазы LOGIN).
+
         // 1) автовход по активной сессии (тот же IP, срок не истёк)
         if (row != null && row.passwordHash != null && plugin.cfg().sessionsEnabled()
                 && row.sessionExpires != null && row.sessionIp != null) {
@@ -99,41 +108,30 @@ public final class ElytrixAuthListener implements Listener {
         // 2) новичок или вход по паролю
         if (row == null || row.passwordHash == null) {
             s.needReg = true;
-            plugin.messages().chatList(p, "join-msg-reg",
-                    "min", String.valueOf(plugin.cfg().minPassword()),
-                    "timeout", String.valueOf(plugin.cfg().loginTimeout()));
-            Visual.title(p, plugin.messages().raw("join-title-reg"),
-                    plugin.messages().raw("join-subtitle-reg"));
         } else {
             s.needReg = false;
-            if (s.sessionDropped) {
-                plugin.messages().chatList(p, "session-ip-changed");
-            }
-            plugin.messages().chatList(p, "join-msg-login",
-                    "player", p.getName(), "timeout", String.valueOf(plugin.cfg().loginTimeout()));
-            Visual.title(p, plugin.messages().raw("join-title-login"),
-                    plugin.messages().raw("join-subtitle-login"));
         }
-        plugin.showAuthUi(s);
     }
 
-    /** Активная сессия → пускаем без пароля. */
+    /** Активная сессия → пускаем без пароля (состояние/БД, без пакетов игроку). */
     private void autoLogin(ProxiedPlayer p, AuthSession s, Database.PlayerRow row, String ip) {
-        plugin.markAuthed(s);
+        plugin.markAuthed(s); // визуал внутри markAuthed сам отключится — сервера ещё нет
         long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
         try {
             plugin.db().updateSession(row.uuid, ip, expires);
         } catch (Exception ex) {
             plugin.getLogger().warning("updateSession(auto) error: " + ex.getMessage());
         }
-        plugin.messages().chatList(p, "auto-login", "player", p.getName());
         // перевод на target произойдёт в ServerConnect/ServerConnected,
         // чтобы игрок не «мелькал» на auth-карте
     }
 
-    /** После фактического подключения к серверу повторяем инструкцию на экране
-     *  (auth-сервер мог прислать свой title/respawn, перекрывший наш), либо
-     *  доводим авто-вход: если авторизованного всё же занесло на auth — на target. */
+    /** После фактического подключения к серверу показываем игроку весь интерфейс:
+     *  приветствие в чат, title, боссбар. Это ЕДИНСТВЕННОЕ безопасное место для
+     *  пакетов игроку после входа: здесь клиент уже получил LoginSuccess и прошёл
+     *  configuration (для 1.20.2+ LoginSuccess прокси шлёт только в конце коннекта
+     *  к серверу), т.е. он в PLAY. Плюс доводим авто-вход: если авторизованного
+     *  всё же занесло на auth — переводим на target. */
     @EventHandler
     public void onServerConnected(ServerConnectedEvent e) {
         ProxiedPlayer p = e.getPlayer();
@@ -142,8 +140,30 @@ public final class ElytrixAuthListener implements Listener {
             return;
         }
         if (s.isAuthed()) {
+            // авто-вход по сессии (или заход на след. сервер после /login)
+            if (!s.joinUiShown) {
+                s.joinUiShown = true;
+                plugin.messages().chatList(p, "auto-login", "player", s.nickname);
+                plugin.messages().actionbar(p, "actionbar-authed", "player", s.nickname);
+            }
             plugin.ensureNotAuth(p);
             return;
+        }
+        if (!s.joinUiShown) {
+            // первое приземление (на auth): приветствие в зависимости от ситуации
+            s.joinUiShown = true;
+            if (s.sessionDropped) {
+                plugin.messages().chatList(p, "session-ip-changed");
+            }
+            if (s.needReg) {
+                plugin.messages().chatList(p, "join-msg-reg",
+                        "min", String.valueOf(plugin.cfg().minPassword()),
+                        "timeout", String.valueOf(plugin.cfg().loginTimeout()));
+            } else {
+                plugin.messages().chatList(p, "join-msg-login",
+                        "player", s.nickname,
+                        "timeout", String.valueOf(plugin.cfg().loginTimeout()));
+            }
         }
         plugin.showAuthUi(s);
         Visual.title(p,
