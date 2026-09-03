@@ -72,6 +72,7 @@ public final class ElytrixAuthListener implements Listener {
         if (row == null || row.passwordHash == null) {
             s.needReg = true;
             plugin.messages().chatList(p, "join-msg-reg",
+                    "min", String.valueOf(plugin.cfg().minPassword()),
                     "timeout", String.valueOf(plugin.cfg().loginTimeout()));
             Visual.title(p, plugin.messages().raw("join-title-reg"),
                     plugin.messages().raw("join-subtitle-reg"));

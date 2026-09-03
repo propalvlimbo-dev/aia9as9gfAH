@@ -210,9 +210,131 @@ public final class Messages {
 
     // ---------------------------------------------------------------- отправка
 
-    /** Компоненты для чата/actionbar/title (из строки с &-кодами). */
+    /**
+     * Компоненты для чата/actionbar/title из строки с кодами.
+     *
+     * Разбираем вручную (НЕ через fromLegacyText, который на части форков
+     * портит hex-цвета): каждый «прогон» форматирования становится отдельным
+     * TextComponent с явно выставленным цветом/стилем. Hex-цвета
+     * (&#RRGGBB и &x&R&R&G&G&B&B) — через ChatColor.of, который даёт
+     * корректный §x… или hex-JSON для клиента 1.16+.
+     */
     public static BaseComponent[] comp(String textWithAmp) {
-        return TextComponent.fromLegacyText(legacy(textWithAmp));
+        TextComponent root = new TextComponent("");
+        if (textWithAmp == null || textWithAmp.isEmpty()) {
+            return new BaseComponent[]{root};
+        }
+        String text = textWithAmp;
+        StringBuilder buf = new StringBuilder();
+        net.md_5.bungee.api.ChatColor color = null;
+        boolean bold = false, italic = false, underline = false, strike = false, magic = false;
+
+        int i = 0;
+        int n = text.length();
+        while (i < n) {
+            char c = text.charAt(i);
+            if (c == '&' || c == '\u00A7') {
+                if (i + 1 >= n) {
+                    buf.append(c);
+                    i++;
+                    continue;
+                }
+                char code = text.charAt(i + 1);
+                // hex &#RRGGBB
+                if (code == '#' && i + 8 <= n && isHex(text, i + 2, i + 8)) {
+                    flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                    color = hexColor(text.substring(i + 2, i + 8));
+                    i += 8;
+                    continue;
+                }
+                // классический &x&R&R&G&G&B&B
+                if ((code == 'x' || code == 'X') && i + 14 <= n) {
+                    StringBuilder hx = new StringBuilder(6);
+                    int p = i + 2;
+                    boolean ok = true;
+                    for (int k = 0; k < 6; k++) {
+                        char pc = text.charAt(p);
+                        if ((pc == '&' || pc == '\u00A7') && isHexChar(text.charAt(p + 1))) {
+                            hx.append(text.charAt(p + 1));
+                            p += 2;
+                        } else {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (ok) {
+                        flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                        color = hexColor(hx.toString());
+                        i = p;
+                        continue;
+                    }
+                }
+                char low = Character.toLowerCase(code);
+                int ci = "0123456789abcdefklmnor".indexOf(low);
+                if (ci >= 0) {
+                    flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                    if (ci < 16) {
+                        color = legacyColor(low);
+                    } else {
+                        switch (low) {
+                            case 'k': magic = true; break;
+                            case 'l': bold = true; break;
+                            case 'm': strike = true; break;
+                            case 'n': underline = true; break;
+                            case 'o': italic = true; break;
+                            default: // 'r' — сброс
+                                color = null;
+                                bold = italic = underline = strike = magic = false;
+                                break;
+                        }
+                    }
+                    i += 2;
+                    continue;
+                }
+                // неизвестный код — оставляем как есть
+                buf.append(c);
+                i++;
+                continue;
+            }
+            buf.append(c);
+            i++;
+        }
+        flushRun(root, buf, color, bold, italic, underline, strike, magic);
+        return new BaseComponent[]{root};
+    }
+
+    private static void flushRun(TextComponent root, StringBuilder buf,
+                                 net.md_5.bungee.api.ChatColor color,
+                                 boolean bold, boolean italic, boolean underline,
+                                 boolean strike, boolean magic) {
+        if (buf.length() == 0) {
+            return;
+        }
+        TextComponent t = new TextComponent(buf.toString());
+        t.setColor(color);
+        t.setBold(bold);
+        t.setItalic(italic);
+        t.setUnderlined(underline);
+        t.setStrikethrough(strike);
+        t.setObfuscated(magic);
+        root.addExtra(t);
+        buf.setLength(0);
+    }
+
+    private static net.md_5.bungee.api.ChatColor hexColor(String rgb) {
+        try {
+            return net.md_5.bungee.api.ChatColor.of("#" + rgb);
+        } catch (Throwable t) {
+            return null; // старый форк без hex — просто без цвета
+        }
+    }
+
+    private static net.md_5.bungee.api.ChatColor legacyColor(char low) {
+        return net.md_5.bungee.api.ChatColor.getByChar(low);
+    }
+
+    private static boolean isHexChar(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     }
 
     public BaseComponent[] compKey(String key, String... args) {
