@@ -134,6 +134,8 @@ public final class PluginConfig {
 
     public int    linkTtl()      { return getInt("link.code.ttl.seconds", 300); }
     public int    login2faTtl()  { return getInt("login2fa.ttl.seconds", 90); }
+    /** Юзернейм Telegram-бота без @ (для кликабельной ссылки в /addtg). */
+    public String tgBotUsername() { return get("tg.bot.username", "Elytrixbot"); }
 
     // ---- сессии (вход без пароля после перезахода) ----
     /** Включены ли сессии. */

@@ -32,6 +32,12 @@ public abstract class BaseComponent {
     public void setObfuscated(Boolean obfuscated) {
     }
 
+    public void setClickEvent(net.md_5.bungee.api.event.ClickEvent clickEvent) {
+    }
+
+    public void setHoverEvent(net.md_5.bungee.api.event.HoverEvent hoverEvent) {
+    }
+
     public void addExtra(String text) {
     }
 

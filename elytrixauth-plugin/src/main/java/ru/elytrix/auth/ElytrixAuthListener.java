@@ -26,11 +26,12 @@ import java.util.Set;
  */
 public final class ElytrixAuthListener implements Listener {
 
-    private static final Set<String> PRE_AUTH_COMMANDS = new HashSet<>(Arrays.asList(
+    /** Команды авторизации: до входа — единственное, что разрешено; после входа — скрыты/заглушены. */
+    private static final Set<String> AUTH_COMMANDS = new HashSet<>(Arrays.asList(
             "reg", "register", "l", "login"));
-    /** Таб у неавторизованного: команды авторизации + заглушка «ПАРОЛЬ» после пробела. */
-    private static final List<String> TAB_COMMANDS = Arrays.asList(
-            "/login", "/l", "/register", "/reg");
+    /** Таб у неавторизованного: только нужная команда (см. needReg) + заглушка «ПАРОЛЬ» после пробела. */
+    private static final List<String> TAB_LOGIN_CMDS = Arrays.asList("/login", "/l");
+    private static final List<String> TAB_REG_CMDS = Arrays.asList("/register", "/reg");
     private static final String TAB_PASSWORD = "ПАРОЛЬ"; // визуальная заглушка вместо пароля
 
     private final ElytrixAuthPlugin plugin;
@@ -183,11 +184,19 @@ public final class ElytrixAuthListener implements Listener {
         ProxiedPlayer p = (ProxiedPlayer) sender;
         AuthSession s = plugin.session(p.getUniqueId());
         if (s != null && s.isAuthed()) {
+            // авторизованному команды входа/регистрации не нужны (особенно на игровом сервере):
+            // /login, /l, /register, /reg молча гасим, остальное не трогаем
+            if (e.isCommand()) {
+                String cmd = commandName(e.getMessage());
+                if (cmd != null && AUTH_COMMANDS.contains(cmd)) {
+                    e.setCancelled(true);
+                }
+            }
             return;
         }
         if (e.isCommand()) {
             String cmd = commandName(e.getMessage());
-            if (cmd != null && PRE_AUTH_COMMANDS.contains(cmd)) {
+            if (cmd != null && AUTH_COMMANDS.contains(cmd)) {
                 return; // команды авторизации — пропускаем к обработчику
             }
             plugin.messages().chat(p, s != null && s.needReg ? "cmd-blocked-reg" : "cmd-blocked-login");
@@ -204,10 +213,12 @@ public final class ElytrixAuthListener implements Listener {
     }
 
     /**
-     * Таб: неавторизованному показываем только команды авторизации,
-     * чтобы он не видел список серверных команд и ники игроков.
-     * После пробела таб подставляет слово-заглушку «ПАРОЛЬ» — куда вводить пароль:
-     *   /l<tab> → /l <tab> → /l ПАРОЛЬ   (аналогично /reg для обоих аргументов).
+     * Таб:
+     *  - неавторизованному (на auth-сервере) показываем ТОЛЬКО ту команду,
+     *    которая ему нужна: регистрирующемуся — /register, входящему — /login
+     *    (с алиасами /reg и /l); после пробела — слово-заглушку «ПАРОЛЬ»;
+     *  - авторизованному из подсказок вырезаем команды авторизации,
+     *    чтобы они не светились на игровом сервере.
      *
      * Важно: событие НЕ отменяем, если есть подсказки — по реализации BungeeCord
      * ответ клиенту уходит только у неотменённого события с непустым списком.
@@ -222,24 +233,30 @@ public final class ElytrixAuthListener implements Listener {
         }
         ProxiedPlayer p = (ProxiedPlayer) sender;
         AuthSession s = plugin.session(p.getUniqueId());
-        if (s == null || s.isAuthed()) {
-            return; // авторизованным — обычный таб
+        if (s == null) {
+            return; // сессии нет — не трогаем таб
+        }
+        if (s.isAuthed()) {
+            // авторизованный: убираем /login /l /register /reg из того, что прислал прокси
+            e.getSuggestions().removeIf(sug -> isAuthSuggestion(sug));
+            return;
         }
         String cursor = e.getCursor() == null ? "" : e.getCursor();
+        List<String> cmds = s.needReg ? TAB_REG_CMDS : TAB_LOGIN_CMDS;
         List<String> out = new ArrayList<>();
         int sp = cursor.indexOf(' ');
         if (sp < 0) {
-            // пробела ещё нет — дописываем саму команду авторизации
+            // пробела ещё нет — дописываем нужную команду авторизации
             if (cursor.startsWith("/")) {
                 String typed = cursor.toLowerCase(Locale.ROOT);
-                for (String cmd : TAB_COMMANDS) {
+                for (String cmd : cmds) {
                     if (cmd.startsWith(typed)) {
                         out.add(cmd + " ");
                     }
                 }
                 // набрана ровно одна команда — соседний алиас не предлагаем
                 if (out.size() > 1) {
-                    for (String cmd : TAB_COMMANDS) {
+                    for (String cmd : cmds) {
                         if (cmd.equals(typed)) {
                             out.clear();
                             out.add(cmd + " ");
@@ -265,6 +282,20 @@ public final class ElytrixAuthListener implements Listener {
         if (out.isEmpty()) {
             e.setCancelled(true); // нечего показать — гасим запрос полностью
         }
+    }
+
+    /** Подсказка относится к команде авторизации ("login", "/l", "reg " и т.п.). */
+    private static boolean isAuthSuggestion(String sug) {
+        if (sug == null) {
+            return false;
+        }
+        String t = sug.trim();
+        while (t.startsWith("/")) {
+            t = t.substring(1);
+        }
+        int sp = t.indexOf(' ');
+        String word = (sp > 0 ? t.substring(0, sp) : t).toLowerCase(Locale.ROOT);
+        return AUTH_COMMANDS.contains(word);
     }
 
     @EventHandler

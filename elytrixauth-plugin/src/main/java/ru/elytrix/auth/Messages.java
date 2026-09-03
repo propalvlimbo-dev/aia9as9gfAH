@@ -3,6 +3,8 @@ package ru.elytrix.auth;
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
+import net.md_5.bungee.api.event.ClickEvent;
+import net.md_5.bungee.api.event.HoverEvent;
 
 import java.io.File;
 import java.io.IOException;
@@ -218,13 +220,111 @@ public final class Messages {
      * TextComponent с явно выставленным цветом/стилем. Hex-цвета
      * (&#RRGGBB и &x&R&R&G&G&B&B) — через ChatColor.of, который даёт
      * корректный §x… или hex-JSON для клиента 1.16+.
+     *
+     * Поддерживаются кликабельные теги (плейсхолдеры подставляются раньше,
+     * в raw/apply):
+     *   [copy=текст]…[/copy]       — клик копирует текст (например /link {code})
+     *   [suggest=текст]…[/suggest] — клик вставляет текст в строку ввода
+     *   [run=команда]…[/run]       — клик выполняет команду
+     *   [url=ссылка]…[/url]        — клик открывает ссылку
+     * У каждого тега свой авто-hover-подсказка («нажми, чтобы…»).
      */
     public static BaseComponent[] comp(String textWithAmp) {
         TextComponent root = new TextComponent("");
         if (textWithAmp == null || textWithAmp.isEmpty()) {
             return new BaseComponent[]{root};
         }
-        String text = textWithAmp;
+        appendMarkup(root, textWithAmp);
+        return new BaseComponent[]{root};
+    }
+
+    /** Разбор текста: обычные куски + кликабельные теги [action=value]…[/action]. */
+    private static void appendMarkup(TextComponent root, String text) {
+        int i = 0;
+        int n = text.length();
+        while (i < n) {
+            int open = text.indexOf('[', i);
+            if (open < 0) {
+                renderPlain(root, text.substring(i));
+                break;
+            }
+            String actionName = null;
+            String value = null;
+            int contentStart = -1;
+            int closeBracket = text.indexOf(']', open + 1);
+            if (closeBracket > open) {
+                String head = text.substring(open + 1, closeBracket);
+                int eq = head.indexOf('=');
+                if (eq > 0) {
+                    String maybe = head.substring(0, eq).trim().toLowerCase(java.util.Locale.ROOT);
+                    if (clickAction(maybe) != null) {
+                        actionName = maybe;
+                        value = head.substring(eq + 1).trim();
+                        contentStart = closeBracket + 1;
+                    }
+                }
+            }
+            if (actionName != null && value != null) {
+                String closingTag = "[/" + actionName + "]";
+                int close = text.indexOf(closingTag, contentStart);
+                if (close >= 0) {
+                    renderPlain(root, text.substring(i, open));
+                    appendClickable(root, text.substring(contentStart, close), actionName, value);
+                    i = close + closingTag.length();
+                    continue;
+                }
+            }
+            // не тег — '[' обычный символ
+            renderPlain(root, text.substring(i, open + 1));
+            i = open + 1;
+        }
+    }
+
+    private static ClickEvent.Action clickAction(String name) {
+        switch (name) {
+            case "copy":    return ClickEvent.Action.COPY_TO_CLIPBOARD;
+            case "suggest": return ClickEvent.Action.SUGGEST_COMMAND;
+            case "run":     return ClickEvent.Action.RUN_COMMAND;
+            case "url":     return ClickEvent.Action.OPEN_URL;
+            default:        return null;
+        }
+    }
+
+    /** Текст внутри тега рисуем обычными цветовыми прогонами, но каждый с кликом/ховером. */
+    private static void appendClickable(TextComponent root, String inner, String actionName, String value) {
+        ClickEvent.Action act = clickAction(actionName);
+        if (act == null) {
+            renderPlain(root, inner);
+            return;
+        }
+        ClickEvent click = new ClickEvent(act, value);
+        HoverEvent hover = new HoverEvent(HoverEvent.Action.SHOW_TEXT, hoverText(actionName));
+        parse(root, inner, click, hover);
+    }
+
+    /** Авто-подсказка при наведении на кликабельный кусок. */
+    private static BaseComponent[] hoverText(String actionName) {
+        String msg;
+        switch (actionName) {
+            case "copy":    msg = "&7Нажми — &fскопировать"; break;
+            case "suggest": msg = "&7Нажми — &fвставить в чат"; break;
+            case "run":     msg = "&7Нажми — &fвыполнить"; break;
+            case "url":     msg = "&7Нажми — &fоткрыть ссылку"; break;
+            default:        msg = "";
+        }
+        return TextComponent.fromLegacyText(legacy(msg));
+    }
+
+    private static void renderPlain(TextComponent root, String text) {
+        parse(root, text, null, null);
+    }
+
+    /** Цветовой разбор строки в «прогоны»; каждый прогон получает click/hover (если заданы). */
+    private static void parse(TextComponent root, String text,
+                              ClickEvent click, HoverEvent hover) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
         StringBuilder buf = new StringBuilder();
         net.md_5.bungee.api.ChatColor color = null;
         boolean bold = false, italic = false, underline = false, strike = false, magic = false;
@@ -242,7 +342,7 @@ public final class Messages {
                 char code = text.charAt(i + 1);
                 // hex &#RRGGBB
                 if (code == '#' && i + 8 <= n && isHex(text, i + 2, i + 8)) {
-                    flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                    flushRun(root, buf, color, bold, italic, underline, strike, magic, click, hover);
                     color = hexColor(text.substring(i + 2, i + 8));
                     i += 8;
                     continue;
@@ -263,7 +363,7 @@ public final class Messages {
                         }
                     }
                     if (ok) {
-                        flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                        flushRun(root, buf, color, bold, italic, underline, strike, magic, click, hover);
                         color = hexColor(hx.toString());
                         i = p;
                         continue;
@@ -272,7 +372,7 @@ public final class Messages {
                 char low = Character.toLowerCase(code);
                 int ci = "0123456789abcdefklmnor".indexOf(low);
                 if (ci >= 0) {
-                    flushRun(root, buf, color, bold, italic, underline, strike, magic);
+                    flushRun(root, buf, color, bold, italic, underline, strike, magic, click, hover);
                     if (ci < 16) {
                         color = legacyColor(low);
                     } else {
@@ -299,14 +399,14 @@ public final class Messages {
             buf.append(c);
             i++;
         }
-        flushRun(root, buf, color, bold, italic, underline, strike, magic);
-        return new BaseComponent[]{root};
+        flushRun(root, buf, color, bold, italic, underline, strike, magic, click, hover);
     }
 
     private static void flushRun(TextComponent root, StringBuilder buf,
                                  net.md_5.bungee.api.ChatColor color,
                                  boolean bold, boolean italic, boolean underline,
-                                 boolean strike, boolean magic) {
+                                 boolean strike, boolean magic,
+                                 ClickEvent click, HoverEvent hover) {
         if (buf.length() == 0) {
             return;
         }
@@ -317,6 +417,12 @@ public final class Messages {
         t.setUnderlined(underline);
         t.setStrikethrough(strike);
         t.setObfuscated(magic);
+        if (click != null) {
+            t.setClickEvent(click);
+        }
+        if (hover != null) {
+            t.setHoverEvent(hover);
+        }
         root.addExtra(t);
         buf.setLength(0);
     }

@@ -336,6 +336,8 @@ public final class ElytrixAuthPlugin extends Plugin {
         s.authedAt = now();
         s.tgHintShown = false;
         s.remindAt = 0;
+        s.okTipAt = 0;
+        s.linkDoneAt = 0;
         if (s.bar != null) {
             s.bar.remove();
             s.bar = null;
@@ -582,6 +584,7 @@ public final class ElytrixAuthPlugin extends Plugin {
 
     private void tickOk(AuthSession s, ProxiedPlayer p) {
         long now = now();
+        long ms = System.currentTimeMillis();
         // одноразовая подсказка про /addtg — только после входа и если TG не привязан
         if (!s.tgHintShown && now - s.authedAt >= 3) {
             s.tgHintShown = true;
@@ -594,10 +597,42 @@ public final class ElytrixAuthPlugin extends Plugin {
                 pluginLogWarning("hint-tg: " + ex.getMessage());
             }
         }
-        if (s.linkId >= 0 && db.isLinkBound(s.linkId)) {
-            s.linkId = -1;
-            s.linkCode = null;
-            messages().chatList(p, "tg-linked", "player", s.nickname);
+        // процесс привязки Telegram в actionbar: код + сколько осталось до удаления
+        if (s.linkId >= 0) {
+            if (ms - s.okTipAt >= 1000) {
+                s.okTipAt = ms;
+                boolean bound = db.isLinkBound(s.linkId); // сам ловит ошибки БД и вернёт false
+                if (bound) {
+                    s.linkId = -1;
+                    s.linkCode = null;
+                    s.linkDoneAt = ms;
+                    messages().chatList(p, "tg-linked", "player", s.nickname);
+                    messages().actionbar(p, "addtg-actionbar-done");
+                    return;
+                }
+                if (s.linkExpires > 0 && now >= s.linkExpires) {
+                    // код истёк — просто перестаём показывать процесс
+                    s.linkId = -1;
+                    s.linkCode = null;
+                    return;
+                }
+                long left = Math.max(0, s.linkExpires - now);
+                messages().actionbar(p, "addtg-actionbar",
+                        "code", s.linkCode == null ? "" : s.linkCode,
+                        "sec", String.valueOf(left));
+            }
+            return;
+        }
+        // баннер «успешно привязал» висит в actionbar ~15 секунд
+        if (s.linkDoneAt > 0) {
+            if (ms - s.linkDoneAt < 15_000) {
+                if (ms - s.okTipAt >= 1000) {
+                    s.okTipAt = ms;
+                    messages().actionbar(p, "addtg-actionbar-done");
+                }
+            } else {
+                s.linkDoneAt = 0;
+            }
         }
     }
 

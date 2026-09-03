@@ -162,14 +162,20 @@ hint-tg:
 
 addtg-not-authed: '{prefix} &cСначала войди: &#F8BEFB/login &7<пароль>'
 addtg-db-error: '{prefix} &cНе удалось создать код &7— попробуй ещё раз'
+# Кликабельно: [copy=/link {code}] — клик копирует команду, [url=https://t.me/{bot}] — открывает бота
 addtg-msg:
   - ''
   - '{prefix} &#F8BEFBПривязка Telegram'
-  - '&#F8BEFB┃ &fКод: &#F8BEFB{code}'
-  - '&#F8BEFB┃ &fДействие: &7отправь боту &f/link {code}'
-  - '&#F8BEFB┃ &fСрок: &#F8BEFB{ttl}&7 сек'
+  - '&#F8BEFB┃ &fКод: [copy=/link {code}]&#F8BEFB/link {code}[/copy]'
+  - '&#F8BEFB┃ &fБот: [url=https://t.me/{bot}]&#F8BEFB@{bot}[/url]'
+  - '&#F8BEFB┃ &fСрок: &#F8BEFB{ttl}&7 сек &8| &fкод виден над хотбаром'
   - '&7● &fСначала напиши боту любое сообщение'
   - ''
+
+# Процесс привязки над хотбаром: код + отсчёт до удаления (пока код жив)
+addtg-actionbar: '{prefix} &#F8BEFBПривязка &7• &fКод: &#F8BEFB{code} &7• &fисчезнет через &#F8BEFB{sec}&7 сек'
+# Баннер после успешной привязки (висит ~15 секунд)
+addtg-actionbar-done: '{prefix} &f>> &aВы успешно привязали аккаунт к боту'
 
 tg-linked:
   - ''
@@ -187,6 +193,7 @@ kick-logged-out: '&cТы вышел с аккаунта\n\n&7Войди зано
 # ---------- админ-команды (/elytrixauth) ----------
 
 admin-no-perm: '{prefix} &cНедостаточно прав'
+admin-console-only: '{prefix} &cКоманда доступна только из консоли'
 admin-usage:
   - ''
   - '{prefix} &#F8BEFBАдмин-панель ElytrixAuth'

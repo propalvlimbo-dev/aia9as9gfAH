@@ -31,6 +31,12 @@ public final class AuthSession {
     public volatile long linkId = -1;
     /** последний сгенерированный код привязки. */
     public volatile String linkCode = null;
+    /** epoch-сек, когда код привязки истечёт (для отсчёта в actionbar). */
+    public volatile long linkExpires = 0;
+    /** когда показан баннер «аккаунт привязан» (эпоха-мс; 0 = нет). */
+    public volatile long linkDoneAt = 0;
+    /** анти-спам actionbar в состоянии OK (эпоха-мс). */
+    public volatile long okTipAt = 0;
     /** живой bossbar (null, если не поддерживается прокси). */
     public volatile Visual.BossBar bar = null;
     /** последний текст боссбара, чтобы не спамить пакеты. */

@@ -4,15 +4,13 @@ import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.plugin.Command;
 
-import java.util.Collection;
 import java.util.Locale;
 
 /**
- * Админ-команды:
+ * Админ-команды (ТОЛЬКО из консоли прокси — с игры недоступны):
  *   /elytrixauth reload                 — перезагрузить конфиг/сообщения/БД
  *   /elytrixauth reset <ник>            — полный сброс (пароль + Telegram), с подтверждением
  *   /elytrixauth resetpassword <ник>    — сброс только пароля, с подтверждением
- * Доступ: право elytrixauth.admin, либо "*" / "elytrixauth.*" (консоль — всегда).
  */
 public final class CmdAdmin extends Command {
 
@@ -23,31 +21,13 @@ public final class CmdAdmin extends Command {
         this.plugin = plugin;
     }
 
-    /** Доступ для игроков с elytrixauth.admin, "*" или elytrixauth.*; консоль — всегда. */
-    private static boolean isAdmin(CommandSender sender) {
-        if (!(sender instanceof ProxiedPlayer)) {
-            return true; // консоль и прочие не-игроки
-        }
-        ProxiedPlayer p = (ProxiedPlayer) sender;
-        if (p.hasPermission("elytrixauth.admin")
-                || p.hasPermission("elytrixauth.*")
-                || p.hasPermission("*")) {
-            return true;
-        }
-        // на некоторых прокси (Bungee/форки) hasPermission не трактует "*" как wildcard —
-        // проверяем сам список прав
-        Collection<String> perms = p.getPermissions();
-        return perms != null && (perms.contains("elytrixauth.admin")
-                || perms.contains("elytrixauth.*")
-                || perms.contains("*"));
-    }
-
     @Override
     public void execute(CommandSender sender, String[] args) {
-        if (!isAdmin(sender)) {
-            plugin.messages().sendComp(sender, "admin-no-perm");
+        if (sender instanceof ProxiedPlayer) {
+            plugin.messages().sendComp(sender, "admin-console-only");
             return;
         }
+        // дальше — только консоль (CommandSender без ProxiedPlayer)
         if (args.length == 0) {
             plugin.messages().sendCompList(sender, "admin-usage");
             return;

@@ -41,8 +41,13 @@ public final class CmdAddTg extends Command {
             if (live != null) {
                 s.linkId = live.id;
                 s.linkCode = live.code;
+                s.linkExpires = live.expires;
+                s.okTipAt = 0;
+                s.linkDoneAt = 0;
                 plugin.messages().chatList(p, "addtg-msg",
-                        "code", live.code, "ttl", String.valueOf(live.expires - now));
+                        "code", live.code,
+                        "ttl", String.valueOf(Math.max(0, live.expires - now)),
+                        "bot", plugin.cfg().tgBotUsername());
                 return;
             }
             // живого кода нет — создаём новый
@@ -55,8 +60,13 @@ public final class CmdAddTg extends Command {
             }
             s.linkId = linkId;
             s.linkCode = code;
+            s.linkExpires = now + plugin.cfg().linkTtl();
+            s.okTipAt = 0;
+            s.linkDoneAt = 0;
             plugin.messages().chatList(p, "addtg-msg",
-                    "code", code, "ttl", String.valueOf(plugin.cfg().linkTtl()));
+                    "code", code,
+                    "ttl", String.valueOf(plugin.cfg().linkTtl()),
+                    "bot", plugin.cfg().tgBotUsername());
         } catch (SQLException e) {
             plugin.messages().chat(p, "db-error");
             plugin.getLogger().severe("createPendingLink error: " + e.getMessage());
