@@ -61,18 +61,16 @@ public final class CmdLogin extends Command {
         plugin.clearFails("nick:" + s.nickname.toLowerCase());
         plugin.clearFails("ip:" + s.ip);
 
-        // сессия: при перезаходе с того же IP пароль не спросим
-        if (plugin.cfg().sessionsEnabled()) {
-            try {
-                plugin.db().updateSession(s.uuid, s.ip,
-                        ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds());
-            } catch (SQLException e) {
-                plugin.getLogger().severe("updateSession(login) error: " + e.getMessage());
-            }
-        }
-
         if (row.tgId == null) {
-            // нет привязки — впускаем сразу
+            // нет привязки — впускаем сразу и выдаём сессию
+            if (plugin.cfg().sessionsEnabled()) {
+                try {
+                    plugin.db().updateSession(row.uuid, s.ip,
+                            ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds());
+                } catch (SQLException e) {
+                    plugin.getLogger().severe("updateSession(login) error: " + e.getMessage());
+                }
+            }
             plugin.markAuthed(s);
             plugin.messages().chat(p, "login-ok", "player", s.nickname);
             plugin.connectTarget(p);

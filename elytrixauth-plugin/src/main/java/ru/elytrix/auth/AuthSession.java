@@ -36,8 +36,10 @@ public final class AuthSession {
     /** последний текст боссбара, чтобы не спамить пакеты. */
     public volatile String barText = null;
 
-    /** для анти-спама подсказок в чате. */
+    /** для анти-спама actionbar в тике. */
     public volatile long lastTipAt = 0;
+    /** для анти-спама сообщений о блокировке чата. */
+    public volatile long chatTipAt = 0;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 

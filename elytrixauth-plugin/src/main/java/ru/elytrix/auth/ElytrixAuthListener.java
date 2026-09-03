@@ -92,21 +92,27 @@ public final class ElytrixAuthListener implements Listener {
         plugin.markAuthed(s);
         long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
         try {
-            plugin.db().updateSession(s.uuid, ip, expires);
+            plugin.db().updateSession(row.uuid, ip, expires);
         } catch (Exception ex) {
             plugin.getLogger().warning("updateSession(auto) error: " + ex.getMessage());
         }
         plugin.messages().chatList(p, "auto-login", "player", p.getName());
-        plugin.connectTarget(p);
+        // перевод на target произойдёт в ServerConnect/ServerConnected,
+        // чтобы игрок не «мелькал» на auth-карте
     }
 
     /** После фактического подключения к серверу повторяем инструкцию на экране
-     *  (auth-сервер мог прислать свой title/respawn, перекрывший наш). */
+     *  (auth-сервер мог прислать свой title/respawn, перекрывший наш), либо
+     *  доводим авто-вход: если авторизованного всё же занесло на auth — на target. */
     @EventHandler
     public void onServerConnected(ServerConnectedEvent e) {
         ProxiedPlayer p = e.getPlayer();
         AuthSession s = plugin.session(p.getUniqueId());
-        if (s == null || s.isAuthed()) {
+        if (s == null) {
+            return;
+        }
+        if (s.isAuthed()) {
+            plugin.ensureNotAuth(p);
             return;
         }
         plugin.showAuthUi(s);
@@ -120,7 +126,17 @@ public final class ElytrixAuthListener implements Listener {
         ProxiedPlayer p = e.getPlayer();
         AuthSession s = plugin.session(p.getUniqueId());
         if (s != null && s.isAuthed()) {
-            return; // авторизованным можно всё
+            // авторизованный (например, автовход по сессии): на auth его не ведём —
+            // если цель — auth, сразу правим на target, чтобы не мелькал на входной карте
+            ServerInfo auth = plugin.authServerInfo();
+            if (auth != null && e.getTarget() != null
+                    && e.getTarget().getName().equalsIgnoreCase(auth.getName())) {
+                ServerInfo target = plugin.proxy().getServerInfo(plugin.cfg().targetServer());
+                if (target != null) {
+                    e.setTarget(target);
+                }
+            }
+            return;
         }
         // неавторизованный: разрешаем только auth-сервер
         ServerInfo target = e.getTarget();
@@ -154,9 +170,9 @@ public final class ElytrixAuthListener implements Listener {
             plugin.messages().chat(p, s != null && s.needReg ? "cmd-blocked-reg" : "cmd-blocked-login");
         } else {
             long now = ElytrixAuthPlugin.now();
-            if (s == null || now - s.lastTipAt > 4) {
+            if (s == null || now - s.chatTipAt > 5) {
                 if (s != null) {
-                    s.lastTipAt = now;
+                    s.chatTipAt = now;
                 }
                 plugin.messages().chat(p, s != null && s.needReg ? "chat-blocked-reg" : "chat-blocked-login");
             }

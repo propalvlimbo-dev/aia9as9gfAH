@@ -3,6 +3,7 @@ package ru.elytrix.auth;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
+import net.md_5.bungee.api.connection.Server;
 import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.api.plugin.PluginManager;
 
@@ -179,20 +180,22 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
-    /** Показывает экранные подсказки и запускает боссбар с таймером. */
+    /** Показывает экранные подсказки и запускает боссбар с таймером.
+     *  Бар пересоздаётся: после смены сервера клиент мог потерять «add». */
     public void showAuthUi(AuthSession s) {
         ProxiedPlayer p = getProxy().getPlayer(s.uuid);
         if (p == null) {
             return;
         }
         int total = Math.max(1, s.totalSec > 0 ? s.totalSec : cfg.loginTimeout());
-        if (s.bar == null) {
-            s.bar = Visual.startBossBar(p,
-                    messages().raw("bossbar-auth", "sec", String.valueOf(total)));
-        }
         if (s.bar != null) {
-            s.barText = null;
-            s.bar.update(1f, messages().raw("bossbar-auth", "sec", String.valueOf(total)));
+            s.bar.remove();
+            s.bar = null;
+        }
+        s.barText = null;
+        s.bar = Visual.startBossBar(p, messages().raw("bossbar-auth", "sec", String.valueOf(total)));
+        if (s.bar != null) {
+            s.bar.update(1f, null);
         }
     }
 
@@ -209,6 +212,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         ProxiedPlayer p = getProxy().getPlayer(s.uuid);
         if (p != null) {
             Visual.clearTitle(p);
+            messages().actionbar(p, "actionbar-authed", "player", s.nickname);
         }
     }
 
@@ -217,6 +221,28 @@ public final class ElytrixAuthPlugin extends Plugin {
         ServerInfo target = getProxy().getServerInfo(cfg.targetServer());
         if (target != null) {
             p.connect(target);
+        }
+    }
+
+    /** Если авторизованный игрок сидит на auth-сервере — переводим его на target. */
+    public void ensureNotAuth(ProxiedPlayer p) {
+        try {
+            Server cur = p.getServer();
+            ServerInfo curInfo = cur == null ? null : cur.getInfo();
+            ServerInfo target = getProxy().getServerInfo(cfg.targetServer());
+            if (target == null) {
+                return;
+            }
+            if (curInfo != null && curInfo.getName().equalsIgnoreCase(target.getName())) {
+                return;
+            }
+            ServerInfo auth = authServerInfo();
+            if (curInfo != null && auth != null
+                    && !curInfo.getName().equalsIgnoreCase(auth.getName())) {
+                return; // уже на каком-то обычном сервере — не трогаем
+            }
+            p.connect(target);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -294,6 +320,16 @@ public final class ElytrixAuthPlugin extends Plugin {
 
         String st = db.pollLoginRequest(s.requestId);
         if ("confirmed".equals(st)) {
+            // сессия выдаётся только ПОСЛЕ подтверждения 2FA (иначе её можно обойти)
+            if (cfg.sessionsEnabled()) {
+                try {
+                    java.util.Optional<Database.PlayerRow> r = db.findPlayer(s.nickname);
+                    UUID accountUuid = r.map(x -> x.uuid).orElse(s.uuid);
+                    db.updateSession(accountUuid, s.ip, now + cfg.sessionMaxSeconds());
+                } catch (SQLException e) {
+                    getLogger().severe("updateSession(2fa) error: " + e.getMessage());
+                }
+            }
             markAuthed(s);
             messages().chat(p, "tg-confirmed", "player", s.nickname);
             connectTarget(p);
