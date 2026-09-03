@@ -208,6 +208,11 @@ public final class ElytrixAuthListener implements Listener {
      * чтобы он не видел список серверных команд и ники игроков.
      * После пробела таб подставляет слово-заглушку «ПАРОЛЬ» — куда вводить пароль:
      *   /l<tab> → /l <tab> → /l ПАРОЛЬ   (аналогично /reg для обоих аргументов).
+     *
+     * Важно: событие НЕ отменяем, если есть подсказки — по реализации BungeeCord
+     * ответ клиенту уходит только у неотменённого события с непустым списком.
+     * Отменяем лишь когда показывать нечего (чтобы запрос не ушёл на бэкенд
+     * и неавторизованный не увидел чужие команды/ников в табе).
      */
     @EventHandler
     public void onTabComplete(TabCompleteEvent e) {
@@ -221,7 +226,6 @@ public final class ElytrixAuthListener implements Listener {
             return; // авторизованным — обычный таб
         }
         String cursor = e.getCursor() == null ? "" : e.getCursor();
-        e.setCancelled(true);
         List<String> out = new ArrayList<>();
         int sp = cursor.indexOf(' ');
         if (sp < 0) {
@@ -258,6 +262,9 @@ public final class ElytrixAuthListener implements Listener {
         }
         e.getSuggestions().clear();
         e.getSuggestions().addAll(out);
+        if (out.isEmpty()) {
+            e.setCancelled(true); // нечего показать — гасим запрос полностью
+        }
     }
 
     @EventHandler

@@ -432,13 +432,19 @@ public final class ElytrixAuthPlugin extends Plugin {
                 }, i * CHECK_STEP_MS, TimeUnit.MILLISECONDS);
             }
             long endMs = (long) steps.length * CHECK_STEP_MS;
-            // финальный «успех» и перевод на игровой сервер
+            // финальный «успех»: короткий (fade 1 + stay 12 + fade 5 тиков ≈ 0.9 сек),
+            // чтобы не висел на экране, и убирается ровно перед переводом на target
             executor.schedule(() -> {
                 if (p.isConnected()) {
-                    Visual.title(p, messages().raw(doneTitleKey), doneSub);
+                    Visual.title(p, messages().raw(doneTitleKey), doneSub, 1, 12, 5);
                 }
             }, endMs, TimeUnit.MILLISECONDS);
-            executor.schedule(() -> connectTarget(p), endMs + 900, TimeUnit.MILLISECONDS);
+            executor.schedule(() -> {
+                if (p.isConnected()) {
+                    Visual.clearTitle(p);
+                    connectTarget(p);
+                }
+            }, endMs + 900, TimeUnit.MILLISECONDS);
         } catch (Throwable ignored) {
             // если пул уже закрыт (reload/выключение) — просто пускаем игрока сразу
             connectTarget(p);

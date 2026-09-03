@@ -33,13 +33,18 @@ public final class Visual {
 
     /** Большой текст по центру экрана (виден даже при выключенном чате). */
     public static void title(ProxiedPlayer p, String main, String sub) {
+        title(p, main, sub, 5, 100, 15);
+    }
+
+    /** Title с произвольной длительностью (в тиках: 20 тиков = 1 сек). */
+    public static void title(ProxiedPlayer p, String main, String sub, int fadeIn, int stay, int fadeOut) {
         try {
             Title t = ProxyServer.getInstance().createTitle()
                     .title(Messages.comp(main))
                     .subTitle(Messages.comp(sub))
-                    .fadeIn(5)
-                    .stay(100)
-                    .fadeOut(15);
+                    .fadeIn(fadeIn)
+                    .stay(stay)
+                    .fadeOut(fadeOut);
             t.send(p);
         } catch (Throwable ignored) {
         }
