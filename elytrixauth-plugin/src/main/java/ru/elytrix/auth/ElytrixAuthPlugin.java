@@ -102,7 +102,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             } catch (Exception ignored) {
             }
         }
-        api = new ApiServer(cfg, db, getLogger());
+        api = new ApiServer(this, cfg, db, getLogger());
         try {
             api.start();
         } catch (IOException e) {
@@ -302,7 +302,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         } catch (SQLException e) {
             getLogger().log(Level.SEVERE, "reload: не удалось открыть БД: " + e.getMessage(), e);
         }
-        api = new ApiServer(cfg, db, getLogger());
+        api = new ApiServer(this, cfg, db, getLogger());
         try {
             api.start();
         } catch (IOException e) {
@@ -526,6 +526,27 @@ public final class ElytrixAuthPlugin extends Plugin {
 
     public ServerInfo authServerInfo() {
         return getProxy().getServerInfo(cfg.authServer());
+    }
+
+    /**
+     * Уведомление в Telegram о входе, когда 2FA у аккаунта ВЫКЛЮЧЕНА:
+     * игрока пускаем сразу, а бот присылает сообщение «такой-то вошёл».
+     */
+    public void notifyTgLogin(Database.PlayerRow row, String ip) {
+        try {
+            if (row == null || row.tgId == null) {
+                return;
+            }
+            String time = new java.text.SimpleDateFormat("dd.MM.yy HH:mm").format(new java.util.Date());
+            String ipPart = (ip == null || ip.isEmpty()) ? "?" : ip;
+            db.createAlert(row.tgId,
+                    "\uD83D\uDD13 Вход в аккаунт \u00AB" + row.nickname + "\u00BB\n"
+                            + "\uD83C\uDF10 IP: " + ipPart + "\n"
+                            + "\uD83D\uDD50 " + time,
+                    now());
+        } catch (SQLException e) {
+            getLogger().warning("createAlert(login) error: " + e.getMessage());
+        }
     }
 
     public boolean isAuthServerMissing() {

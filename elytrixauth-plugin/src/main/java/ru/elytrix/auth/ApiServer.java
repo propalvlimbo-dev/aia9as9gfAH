@@ -9,6 +9,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.List;
+
+import net.md_5.bungee.api.connection.ProxiedPlayer;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -17,21 +19,28 @@ import java.util.logging.Logger;
  * Мини-HTTP API для Telegram-бота.
  * Бот НЕ ходит в БД — только сюда (это безопаснее: базу наружу открывать не нужно).
  *
- *   GET  /api/pending           -> {"requests":[{id,player_uuid,nickname,ip}]}
- *   POST /api/resolve           -> {"action":"confirm|deny","id":123}
- *   POST /api/link              -> {"code":"12345678","tg_id":123456}
  *   GET  /api/health            -> {"ok":true}
+ *   GET  /api/pending           -> {"requests":[{id,player_uuid,nickname,ip,tg_id}]}
+ *   POST /api/resolve           -> {"action":"confirm|deny","id":123}
+ *   POST /api/link              -> {"code":"123456","tg_id":123456} -> {"nickname":...}
+ *   GET  /api/accounts?tg_id=   -> {"accounts":[{uuid,nickname,online,tg2fa}]}
+ *   POST /api/kick              -> {"nickname":...,"tg_id":...} -> {"online":true/false}
+ *   POST /api/toggle2fa         -> {"nickname":...,"tg_id":...} -> {"tg2fa":true/false}
+ *   POST /api/password          -> {"nickname":...,"tg_id":...,"password":...}
+ *   GET  /api/alerts            -> {"alerts":[{tg_id,text}]} (уведомления о входах)
  *
  * Авторизация: заголовок X-Api-Key: <api.secret из config.properties>
  */
 public final class ApiServer {
 
+    private final ElytrixAuthPlugin plugin;
     private final PluginConfig cfg;
     private final Database db;
     private final Logger log;
     private HttpServer server;
 
-    public ApiServer(PluginConfig cfg, Database db, Logger log) {
+    public ApiServer(ElytrixAuthPlugin plugin, PluginConfig cfg, Database db, Logger log) {
+        this.plugin = plugin;
         this.cfg = cfg;
         this.db = db;
         this.log = log;
@@ -48,6 +57,11 @@ public final class ApiServer {
         server.createContext("/api/pending", this::handlePending);
         server.createContext("/api/resolve", this::handleResolve);
         server.createContext("/api/link", this::handleLink);
+        server.createContext("/api/accounts", this::handleAccounts);
+        server.createContext("/api/kick", this::handleKick);
+        server.createContext("/api/toggle2fa", this::handleToggle2fa);
+        server.createContext("/api/password", this::handlePassword);
+        server.createContext("/api/alerts", this::handleAlerts);
         server.setExecutor(Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "elytrix-api");
             t.setDaemon(true);
@@ -122,6 +136,36 @@ public final class ApiServer {
         try (java.io.InputStream in = ex.getRequestBody()) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    /** Владеет ли аккаунт указанным Telegram. tg_id в теле — от бота: действия только по своим аккаунтам. */
+    private static boolean ownsTg(String body, Database.PlayerRow row) {
+        String tgRaw = firstField(body, "tg_id");
+        if (tgRaw == null || tgRaw.isEmpty()) {
+            return true; // без tg_id (curl/консоль) достаточно ключа API
+        }
+        long tgId;
+        try {
+            tgId = Long.parseLong(tgRaw.trim());
+        } catch (NumberFormatException e) {
+            return false;
+        }
+        return row.tgId != null && row.tgId == tgId;
+    }
+
+    /** Значение query-параметра из URI (например tg_id из ?tg_id=123). */
+    private static String queryField(java.net.URI uri, String key) {
+        String q = uri == null ? null : uri.getQuery();
+        if (q == null) {
+            return null;
+        }
+        for (String part : q.split("&")) {
+            int eq = part.indexOf('=');
+            if (eq > 0 && part.substring(0, eq).equals(key)) {
+                return part.substring(eq + 1);
+            }
+        }
+        return null;
     }
 
     private static String firstField(String body, String key) {
@@ -270,6 +314,192 @@ public final class ApiServer {
             }
         } catch (SQLException e) {
             log.log(Level.WARNING, "link error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Аккаунты, привязанные к Telegram-пользователю (для панели управления в боте). */
+    private void handleAccounts(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String tgRaw = queryField(ex.getRequestURI(), "tg_id");
+        if (tgRaw == null) {
+            respondError(ex, 400, "tg_id required");
+            return;
+        }
+        long tgId;
+        try {
+            tgId = Long.parseLong(tgRaw.trim());
+        } catch (NumberFormatException e) {
+            respondError(ex, 400, "bad tg_id");
+            return;
+        }
+        List<Database.PlayerRow> rows = db.listPlayersByTg(tgId);
+        StringBuilder sb = new StringBuilder("{\"ok\":true,\"accounts\":[");
+        for (int i = 0; i < rows.size(); i++) {
+            Database.PlayerRow r = rows.get(i);
+            if (i > 0) {
+                sb.append(',');
+            }
+            boolean online = plugin.proxy().getPlayer(r.uuid) != null;
+            sb.append("{\"uuid\":").append(jsonStr(r.uuid.toString()))
+                    .append(",\"nickname\":").append(jsonStr(r.nickname))
+                    .append(",\"online\":").append(online)
+                    .append(",\"tg2fa\":").append(r.tg2fa)
+                    .append('}');
+        }
+        sb.append("]}");
+        respondJson(ex, 200, sb.toString());
+    }
+
+    /** Кикнуть игрока (если он онлайн) — кнопка в боте. */
+    private void handleKick(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String body = readBody(ex);
+        String nickname = firstField(body, "nickname");
+        if (nickname == null || nickname.isEmpty()) {
+            respondError(ex, 400, "nickname required");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (!ownsTg(body, row)) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        ProxiedPlayer p = plugin.proxy().getPlayer(row.uuid);
+        if (p != null) {
+            plugin.messages().kick(p, "kick-by-bot");
+        }
+        // сбрасываем сессию: после кика вход будет только по паролю
+        // (+2FA или уведомление, смотря по настройке аккаунта)
+        try {
+            db.clearSession(row.uuid);
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "clearSession(kick api) error", e);
+        }
+        respondJson(ex, 200, "{\"ok\":true,\"online\":" + (p != null) + "}");
+    }
+
+    /** Переключить 2FA (кнопка подтверждения входа) у аккаунта — кнопка в боте. */
+    private void handleToggle2fa(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String body = readBody(ex);
+        String nickname = firstField(body, "nickname");
+        if (nickname == null || nickname.isEmpty()) {
+            respondError(ex, 400, "nickname required");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (!ownsTg(body, row)) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        try {
+            boolean next = !row.tg2fa;
+            db.setTg2fa(row.uuid, next);
+            respondJson(ex, 200, "{\"ok\":true,\"tg2fa\":" + next + "}");
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "setTg2fa error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Сменить пароль аккаунта — кнопка в боте. Сессия сбрасывается. */
+    private void handlePassword(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String body = readBody(ex);
+        String nickname = firstField(body, "nickname");
+        String password = firstField(body, "password");
+        if (nickname == null || nickname.isEmpty() || password == null) {
+            respondError(ex, 400, "nickname and password required");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (!ownsTg(body, row)) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        String rule = PasswordRules.check(cfg, row.nickname, password);
+        if (rule != null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"" + rule + "\"}");
+            return;
+        }
+        try {
+            String hash = PasswordHash.create(password);
+            db.setPassword(row.uuid, hash);
+            db.clearSession(row.uuid); // следующий вход — по новому паролю
+            respondJson(ex, 200, "{\"ok\":true}");
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "setPassword(api) error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Уведомления боту (например, о входе при выключенной 2FA). */
+    private void handleAlerts(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        try {
+            List<Database.AlertRow> alerts = db.takeAlerts();
+            StringBuilder sb = new StringBuilder("{\"ok\":true,\"alerts\":[");
+            for (int i = 0; i < alerts.size(); i++) {
+                Database.AlertRow a = alerts.get(i);
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"tg_id\":").append(a.tgId)
+                        .append(",\"text\":").append(jsonStr(a.text))
+                        .append('}');
+            }
+            sb.append("]}");
+            respondJson(ex, 200, sb.toString());
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "alerts error", e);
             respondError(ex, 500, "db error");
         }
     }

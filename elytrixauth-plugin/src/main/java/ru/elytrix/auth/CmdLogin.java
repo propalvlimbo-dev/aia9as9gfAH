@@ -78,8 +78,10 @@ public final class CmdLogin extends Command {
         plugin.clearFails("nick:" + s.nickname.toLowerCase());
         plugin.clearFails("ip:" + s.ip);
 
-        if (row.tgId == null) {
-            // нет привязки — впускаем сразу и выдаём сессию
+        boolean twoFa = row.tgId != null && row.tg2fa;
+        if (!twoFa) {
+            // нет привязки или 2FA выключена — впускаем сразу и выдаём сессию;
+            // при привязанном TG (2FA выкл) шлём боту простое уведомление о входе
             if (plugin.cfg().sessionsEnabled()) {
                 try {
                     plugin.db().updateSession(row.uuid, s.ip,
@@ -88,11 +90,14 @@ public final class CmdLogin extends Command {
                     plugin.getLogger().severe("updateSession(login) error: " + e.getMessage());
                 }
             }
+            if (row.tgId != null) {
+                plugin.notifyTgLogin(row, s.ip);
+            }
             plugin.markAuthed(s);
             plugin.messages().chat(p, "login-ok", "player", s.nickname);
             plugin.playCheckAnimation(p, "check-done-login");
         } else {
-            // 2FA: пароль верный — ждём кнопку в Telegram
+            // 2FA включена: пароль верный — ждём кнопку в Telegram
             try {
                 long reqId = plugin.db().createLoginRequest(
                         s.uuid, s.nickname, s.ip, plugin.cfg().login2faTtl(), ElytrixAuthPlugin.now());

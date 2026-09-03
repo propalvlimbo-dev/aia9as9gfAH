@@ -33,15 +33,17 @@ public final class Database {
         public final String nickname;
         public final String passwordHash; // может быть null
         public final Long tgId;           // может быть null
+        public final boolean tg2fa;       // вход с кнопкой подтверждения в Telegram
         public final String sessionIp;    // может быть null (сессия не выдана)
         public final Long sessionExpires; // может быть null
 
         PlayerRow(UUID uuid, String nickname, String passwordHash, Long tgId,
-                  String sessionIp, Long sessionExpires) {
+                  boolean tg2fa, String sessionIp, Long sessionExpires) {
             this.uuid = uuid;
             this.nickname = nickname;
             this.passwordHash = passwordHash;
             this.tgId = tgId;
+            this.tg2fa = tg2fa;
             this.sessionIp = sessionIp;
             this.sessionExpires = sessionExpires;
         }
@@ -126,6 +128,7 @@ public final class Database {
                     + " nickname VARCHAR(16) NOT NULL UNIQUE,"
                     + " password_hash VARCHAR(255),"
                     + " tg_id BIGINT,"
+                    + " tg_2fa INT DEFAULT 0,"
                     + " reg_ip VARCHAR(45),"
                     + " reg_ts BIGINT NOT NULL,"
                     + " last_ip VARCHAR(45),"
@@ -154,6 +157,13 @@ public final class Database {
                     + " ip VARCHAR(45) PRIMARY KEY,"
                     + " banned_until BIGINT NOT NULL"
                     + ")");
+            st.execute("CREATE TABLE IF NOT EXISTS tg_alerts ("
+                    + " id BIGINT IDENTITY PRIMARY KEY,"
+                    + " tg_id BIGINT NOT NULL,"
+                    + " text VARCHAR(500) NOT NULL,"
+                    + " created_ts BIGINT NOT NULL,"
+                    + " seen INT DEFAULT 0"
+                    + ")");
         }
         // индексы (HSQLDB не понимает IF NOT EXISTS — проверяем через системные таблицы)
         createIndexIfMissing(c, "players", "idx_players_tg", "CREATE INDEX idx_players_tg ON players(tg_id)");
@@ -164,6 +174,8 @@ public final class Database {
         // миграция для старых БД: колонки сессий могли не создаться
         ensureColumn(c, "PLAYERS", "SESSION_IP", "ALTER TABLE players ADD COLUMN session_ip VARCHAR(45)");
         ensureColumn(c, "PLAYERS", "SESSION_EXPIRES", "ALTER TABLE players ADD COLUMN session_expires BIGINT");
+        // 2FA-переключатель (Telegram-кнопка при входе); по умолчанию выключен
+        ensureColumn(c, "PLAYERS", "TG_2FA", "ALTER TABLE players ADD COLUMN tg_2fa INT DEFAULT 0");
     }
 
     /** Добавляет колонку, если её ещё нет (HSQLDB 2.3 не умеет ADD COLUMN IF NOT EXISTS). */
@@ -306,6 +318,7 @@ public final class Database {
 
     private PlayerRow row(ResultSet rs) throws SQLException {
         Long tg = rs.getObject("tg_id") == null ? null : rs.getLong("tg_id");
+        boolean tg2fa = rs.getInt("tg_2fa") != 0;
         String sessionIp = rs.getString("session_ip");
         Long sessionExpires = rs.getObject("session_expires") == null ? null : rs.getLong("session_expires");
         return new PlayerRow(
@@ -313,6 +326,7 @@ public final class Database {
                 rs.getString("nickname"),
                 rs.getString("password_hash"),
                 tg,
+                tg2fa,
                 sessionIp,
                 sessionExpires);
     }
@@ -321,7 +335,7 @@ public final class Database {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id, session_ip, session_expires "
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
                                 + "FROM players WHERE nickname = ?")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -358,7 +372,7 @@ public final class Database {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id, session_ip, session_expires "
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
                                 + "FROM players WHERE LOWER(nickname) = LOWER(?)")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -453,6 +467,42 @@ public final class Database {
                 ps.setString(3, ip);
                 ps.setLong(4, System.currentTimeMillis() / 1000L);
                 ps.setString(5, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Все аккаунты, привязанные к одному Telegram (для панели управления в боте). */
+    public List<PlayerRow> listPlayersByTg(long tgId) {
+        try {
+            return withConn(c -> {
+                List<PlayerRow> out = new ArrayList<>();
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
+                                + "FROM players WHERE tg_id = ?")) {
+                    ps.setLong(1, tgId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.add(row(rs));
+                        }
+                    }
+                }
+                return out;
+            });
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "listPlayersByTg error", e);
+            return new ArrayList<>();
+        }
+    }
+
+    /** Включить/выключить 2FA (кнопка подтверждения входа в Telegram). */
+    public void setTg2fa(UUID uuid, boolean on) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET tg_2fa = ? WHERE uuid = ?")) {
+                ps.setInt(1, on ? 1 : 0);
+                ps.setString(2, uuid.toString());
                 ps.executeUpdate();
             }
             return null;
@@ -753,6 +803,55 @@ public final class Database {
             }
         });
         return Boolean.TRUE.equals(res);
+    }
+
+    // ---------------- tg_alerts (уведомления боту о входах, 2FA выключена) ----------------
+
+    /** Уведомление боту: игрок вошёл (2FA выключена, просто сообщение о входе). */
+    public void createAlert(long tgId, String text, long now) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO tg_alerts (tg_id, text, created_ts, seen) VALUES (?, ?, ?, 0)")) {
+                ps.setLong(1, tgId);
+                ps.setString(2, text);
+                ps.setLong(3, now);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Уведомление для бота: кто и вошёл. */
+    public static final class AlertRow {
+        public final long tgId;
+        public final String text;
+
+        AlertRow(long tgId, String text) {
+            this.tgId = tgId;
+            this.text = text;
+        }
+    }
+
+    /** Забрать все неотправленные уведомления (для поллера бота) и пометить доставленными. */
+    public List<AlertRow> takeAlerts() throws SQLException {
+        return withConn(c -> {
+            List<AlertRow> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT id, tg_id, text FROM tg_alerts WHERE seen = 0 ORDER BY id ASC FETCH FIRST 100 ROWS ONLY")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new AlertRow(rs.getLong("tg_id"), rs.getString("text")));
+                    }
+                }
+            }
+            if (!out.isEmpty()) {
+                // пометим все неотправленные как доставленные (их немного, поллер один)
+                try (Statement st = c.createStatement()) {
+                    st.executeUpdate("UPDATE tg_alerts SET seen = 1 WHERE seen = 0");
+                }
+            }
+            return out;
+        });
     }
 
     /**

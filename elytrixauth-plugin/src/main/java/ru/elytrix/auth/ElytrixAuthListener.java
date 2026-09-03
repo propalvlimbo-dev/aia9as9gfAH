@@ -90,8 +90,11 @@ public final class ElytrixAuthListener implements Listener {
         // в PLAY). Здесь — только состояние и БД (кики-дисконнекты допустимы:
         // login-кик — штатный пакет фазы LOGIN).
 
-        // 1) автовход по активной сессии (тот же IP, срок не истёк)
+        // 1) автовход по активной сессии (тот же IP, срок не истёк).
+        //    При включённой 2FA (кнопка в Telegram) автовход не действует —
+        //    всегда нужен пароль + подтверждение.
         if (row != null && row.passwordHash != null && plugin.cfg().sessionsEnabled()
+                && !(row.tgId != null && row.tg2fa)
                 && row.sessionExpires != null && row.sessionIp != null) {
             boolean sameIp = row.sessionIp.equals(ip);
             if (!plugin.cfg().sessionCheckIp() || sameIp) {
