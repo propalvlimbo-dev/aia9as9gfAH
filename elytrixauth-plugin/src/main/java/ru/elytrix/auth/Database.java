@@ -31,12 +31,17 @@ public final class Database {
         public final String nickname;
         public final String passwordHash; // может быть null
         public final Long tgId;           // может быть null
+        public final String sessionIp;    // может быть null (сессия не выдана)
+        public final Long sessionExpires; // может быть null
 
-        PlayerRow(UUID uuid, String nickname, String passwordHash, Long tgId) {
+        PlayerRow(UUID uuid, String nickname, String passwordHash, Long tgId,
+                  String sessionIp, Long sessionExpires) {
             this.uuid = uuid;
             this.nickname = nickname;
             this.passwordHash = passwordHash;
             this.tgId = tgId;
+            this.sessionIp = sessionIp;
+            this.sessionExpires = sessionExpires;
         }
     }
 
@@ -122,7 +127,9 @@ public final class Database {
                     + " reg_ip VARCHAR(45),"
                     + " reg_ts BIGINT NOT NULL,"
                     + " last_ip VARCHAR(45),"
-                    + " last_login_ts BIGINT"
+                    + " last_login_ts BIGINT,"
+                    + " session_ip VARCHAR(45),"
+                    + " session_expires BIGINT"
                     + ")");
             st.execute("CREATE TABLE IF NOT EXISTS pending_links ("
                     + " id BIGINT IDENTITY PRIMARY KEY,"
@@ -148,6 +155,31 @@ public final class Database {
         createIndexIfMissing(c, "pending_links", "idx_links_status", "CREATE INDEX idx_links_status ON pending_links(status, expires_ts)");
         createIndexIfMissing(c, "login_requests", "idx_requests_status", "CREATE INDEX idx_requests_status ON login_requests(status, expires_ts)");
         createIndexIfMissing(c, "login_requests", "idx_requests_player", "CREATE INDEX idx_requests_player ON login_requests(player_uuid)");
+        // миграция для старых БД: колонки сессий могли не создаться
+        ensureColumn(c, "PLAYERS", "SESSION_IP", "ALTER TABLE players ADD COLUMN session_ip VARCHAR(45)");
+        ensureColumn(c, "PLAYERS", "SESSION_EXPIRES", "ALTER TABLE players ADD COLUMN session_expires BIGINT");
+    }
+
+    /** Добавляет колонку, если её ещё нет (HSQLDB 2.3 не умеет ADD COLUMN IF NOT EXISTS). */
+    private void ensureColumn(Connection c, String table, String column, String alterSql) {
+        String existsSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                + "WHERE TABLE_NAME = ? AND COLUMN_NAME = ?";
+        try (PreparedStatement ps = c.prepareStatement(existsSql)) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return; // колонка уже есть
+                }
+            }
+        } catch (SQLException ignored) {
+            return; // если схему не прочитать — не рискуем
+        }
+        try (Statement st = c.createStatement()) {
+            st.execute(alterSql);
+        } catch (SQLException e) {
+            log.log(Level.FINE, "ensureColumn " + column + ": " + e.getMessage());
+        }
     }
 
     private void createIndexIfMissing(Connection c, String table, String name, String ddl) {
@@ -267,18 +299,24 @@ public final class Database {
     // ---------------- players ----------------
 
     private PlayerRow row(ResultSet rs) throws SQLException {
+        Long tg = rs.getObject("tg_id") == null ? null : rs.getLong("tg_id");
+        String sessionIp = rs.getString("session_ip");
+        Long sessionExpires = rs.getObject("session_expires") == null ? null : rs.getLong("session_expires");
         return new PlayerRow(
                 UUID.fromString(rs.getString("uuid")),
                 rs.getString("nickname"),
                 rs.getString("password_hash"),
-                rs.getObject("tg_id") == null ? null : rs.getLong("tg_id"));
+                tg,
+                sessionIp,
+                sessionExpires);
     }
 
     public Optional<PlayerRow> findPlayer(String nickname) {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id FROM players WHERE nickname = ?")) {
+                        "SELECT uuid, nickname, password_hash, tg_id, session_ip, session_expires "
+                                + "FROM players WHERE nickname = ?")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
                         return rs.next() ? Optional.of(row(rs)) : Optional.empty();
@@ -316,6 +354,23 @@ public final class Database {
                 ps.setString(1, ip);
                 ps.setLong(2, now);
                 ps.setString(3, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Выдать/обновить сессию (вход без пароля при перезаходе с того же IP). */
+    public void updateSession(UUID uuid, String ip, long expiresAt) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET session_ip = ?, session_expires = ?, last_ip = ?, last_login_ts = ? "
+                            + "WHERE uuid = ?")) {
+                ps.setString(1, ip);
+                ps.setLong(2, expiresAt);
+                ps.setString(3, ip);
+                ps.setLong(4, System.currentTimeMillis() / 1000L);
+                ps.setString(5, uuid.toString());
                 ps.executeUpdate();
             }
             return null;

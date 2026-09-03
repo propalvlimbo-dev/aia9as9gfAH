@@ -105,6 +105,11 @@ public final class PluginConfig {
         }
     }
 
+    private boolean getBool(String key, boolean def) {
+        String v = get(key, def ? "true" : "false");
+        return "true".equalsIgnoreCase(v) || "yes".equalsIgnoreCase(v) || "1".equals(v);
+    }
+
     public String authServer()   { return get("auth.server", "auth"); }
     public String targetServer() { return get("target.server", "grief"); }
 
@@ -118,6 +123,14 @@ public final class PluginConfig {
 
     public int    linkTtl()      { return getInt("link.code.ttl.seconds", 300); }
     public int    login2faTtl()  { return getInt("login2fa.ttl.seconds", 90); }
+
+    // ---- сессии (вход без пароля после перезахода) ----
+    /** Включены ли сессии. */
+    public boolean sessionsEnabled()  { return getBool("sessions.enabled", true); }
+    /** Сколько секунд живёт сессия (перезаход в течение срока — без пароля). */
+    public int    sessionMaxSeconds() { return getInt("session.max.seconds", 12 * 3600); }
+    /** Строго: сессия привязана к IP — с другого IP вход только по паролю. */
+    public boolean sessionCheckIp()   { return getBool("session.check.ip", true); }
 
     public int    apiPort()      { return getInt("api.port", 8754); }
     public String apiSecret()    { return get("api.secret", ""); }

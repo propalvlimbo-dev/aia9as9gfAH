@@ -19,7 +19,7 @@ public final class CmdAddTg extends Command {
     @Override
     public void execute(CommandSender sender, String[] args) {
         if (!(sender instanceof ProxiedPlayer)) {
-            sender.sendMessage("Команда доступна только игрокам.");
+            sender.sendMessage(plugin.messages().raw("cmd-only-player"));
             return;
         }
         ProxiedPlayer p = (ProxiedPlayer) sender;
@@ -28,7 +28,7 @@ public final class CmdAddTg extends Command {
             return;
         }
         if (!s.isAuthed()) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Сначала авторизуйся: §f/login <пароль>");
+            plugin.messages().chat(p, "addtg-not-authed");
             return;
         }
 
@@ -37,17 +37,15 @@ public final class CmdAddTg extends Command {
                     s.uuid, plugin.cfg().linkTtl(), ElytrixAuthPlugin.now());
             String code = plugin.db().linkCode(linkId);
             if (code == null) {
-                p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка генерации кода, попробуй ещё раз.");
+                plugin.messages().chat(p, "addtg-db-error");
                 return;
             }
             s.linkId = linkId;
             s.linkCode = code;
-            p.sendMessage("§eПривязка Telegram:");
-            p.sendMessage("§71) Напиши боту сервера в Telegram.");
-            p.sendMessage("§72) Отправь ему: §f/link " + code);
-            p.sendMessage("§7Код действует " + plugin.cfg().linkTtl() + " сек.");
+            plugin.messages().chatList(p, "addtg-msg",
+                    "code", code, "ttl", String.valueOf(plugin.cfg().linkTtl()));
         } catch (SQLException e) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка базы данных, попробуй ещё раз.");
+            plugin.messages().chat(p, "db-error");
             plugin.getLogger().severe("createPendingLink error: " + e.getMessage());
         }
     }

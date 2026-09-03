@@ -19,7 +19,7 @@ public final class CmdRegister extends Command {
     @Override
     public void execute(CommandSender sender, String[] args) {
         if (!(sender instanceof ProxiedPlayer)) {
-            sender.sendMessage("Команда доступна только игрокам.");
+            sender.sendMessage(plugin.messages().raw("cmd-only-player"));
             return;
         }
         ProxiedPlayer p = (ProxiedPlayer) sender;
@@ -28,28 +28,27 @@ public final class CmdRegister extends Command {
             return;
         }
         if (s.isAuthed()) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Ты уже авторизован.");
+            plugin.messages().chat(p, "already-authed");
             return;
         }
         if (args.length != 2) {
-            p.sendMessage("§eИспользование: §f/reg <пароль> <пароль>");
+            plugin.messages().chat(p, "usage-reg");
             return;
         }
         if (!args[0].equals(args[1])) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Пароли не совпадают.");
+            plugin.messages().chat(p, "pass-mismatch");
             return;
         }
         if (args[0].length() < plugin.cfg().minPassword()) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Пароль слишком короткий (минимум "
-                    + plugin.cfg().minPassword() + " символов).");
+            plugin.messages().chat(p, "pass-short", "min", String.valueOf(plugin.cfg().minPassword()));
             return;
         }
         if (args[0].length() > 64) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Пароль слишком длинный (максимум 64).");
+            plugin.messages().chat(p, "pass-long", "max", "64");
             return;
         }
         if (plugin.db().findPlayer(s.nickname).isPresent()) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Аккаунт уже зарегистрирован. Используй §f/login <пароль>§c.");
+            plugin.messages().chat(p, "account-exists");
             return;
         }
 
@@ -57,14 +56,23 @@ public final class CmdRegister extends Command {
             plugin.db().createPlayer(s.uuid, s.nickname,
                     PasswordHash.create(args[0]), s.ip, ElytrixAuthPlugin.now());
         } catch (SQLException e) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка базы данных, попробуй ещё раз.");
+            plugin.messages().chat(p, "db-error");
             plugin.getLogger().severe("register error: " + e.getMessage());
             return;
         }
 
+        // сразу выдаём сессию — при перезаходе с того же IP пароль не спросим
+        if (plugin.cfg().sessionsEnabled()) {
+            try {
+                plugin.db().updateSession(s.uuid, s.ip,
+                        ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds());
+            } catch (SQLException e) {
+                plugin.getLogger().severe("updateSession(reg) error: " + e.getMessage());
+            }
+        }
+
         plugin.markAuthed(s);
-        p.sendMessage("§aРегистрация успешна! Добро пожаловать на сервер, §f" + s.nickname + "§a.");
-        p.sendMessage("§7Совет: привяжи Telegram командой §f/addtg§7 — будет вход в 2 клика.");
+        plugin.messages().chatList(p, "register-ok", "player", s.nickname);
         plugin.connectTarget(p);
     }
 }

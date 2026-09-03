@@ -20,16 +20,15 @@ import java.util.logging.Level;
 /**
  * ElytrixAuth — авторизация на прокси (NullCordX / Waterfall / BungeeCord).
  * /reg /register, /login /l, привязка Telegram /addtg + 2FA через бота.
- * Хранилище: MariaDB (общая с Telegram-ботом).
+ * Все сообщения — в messages.yml. Сессии: перезаход с того же IP в течение
+ * срока — без пароля. Неавторизованные видят title/actionbar/боссбар-таймер.
  */
 public final class ElytrixAuthPlugin extends Plugin {
-
-    public static final String PREFIX = "§8[§bElytrix§8] §7";
-    public static final String ERR = "§8[§bElytrix§8] §c";
 
     private static ElytrixAuthPlugin instance;
 
     private PluginConfig cfg;
+    private Messages messages;
     private Database db;
     private ApiServer api;
     private ScheduledExecutorService executor;
@@ -50,6 +49,8 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         File configFile = new File(dataFolder, "config.properties");
         PluginConfig.saveDefaultConfig(configFile);
+        File messagesFile = new File(dataFolder, "messages.yml");
+        messages = Messages.load(messagesFile, getLogger());
 
         try {
             cfg = new PluginConfig(configFile);
@@ -80,7 +81,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         pm.registerCommand(this, new CmdAddTg(this));
         pm.registerListener(this, new ElytrixAuthListener(this));
 
-        // тик каждые 500 мс: кики по таймеру, опрос 2FA и статуса привязки
+        // тик каждые 500 мс: таймер/боссбар, actionbar, опрос 2FA и привязки
         executor.scheduleWithFixedDelay(this::tick, 500, 500, TimeUnit.MILLISECONDS);
 
         // HTTP API для Telegram-бота
@@ -101,11 +102,21 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         getLogger().info("ElytrixAuth включён. auth=" + cfg.authServer()
                 + ", target=" + cfg.targetServer());
+        getLogger().info("Сессии: " + (cfg.sessionsEnabled() ? "вкл"
+                + " (срок " + (cfg.sessionMaxSeconds() / 3600) + " ч, проверка IP: " + cfg.sessionCheckIp() + ")"
+                : "выкл"));
         getLogger().info("API-секрет для бота (в .env бота API_KEY): " + cfg.apiSecret());
     }
 
     @Override
     public void onDisable() {
+        // снять боссбары у всех, кто ещё в сессиях
+        for (AuthSession s : sessions.values()) {
+            if (s.bar != null) {
+                s.bar.remove();
+                s.bar = null;
+            }
+        }
         if (executor != null) {
             executor.shutdownNow();
         }
@@ -132,6 +143,10 @@ public final class ElytrixAuthPlugin extends Plugin {
         return cfg;
     }
 
+    public Messages messages() {
+        return messages;
+    }
+
     public Database db() {
         return db;
     }
@@ -151,12 +166,34 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.state = AuthSession.State.WAIT;
             s.deadline = now() + cfg.loginTimeout();
             s.requestId = -1;
+            s.sessionDropped = false;
         }
         return s;
     }
 
     public void leave(UUID uuid) {
-        sessions.remove(uuid);
+        AuthSession s = sessions.remove(uuid);
+        if (s != null && s.bar != null) {
+            s.bar.remove();
+            s.bar = null;
+        }
+    }
+
+    /** Показывает экранные подсказки и запускает боссбар с таймером. */
+    public void showAuthUi(AuthSession s) {
+        ProxiedPlayer p = getProxy().getPlayer(s.uuid);
+        if (p == null) {
+            return;
+        }
+        int total = Math.max(1, s.totalSec > 0 ? s.totalSec : cfg.loginTimeout());
+        if (s.bar == null) {
+            s.bar = Visual.startBossBar(p,
+                    messages().raw("bossbar-auth", "sec", String.valueOf(total)));
+        }
+        if (s.bar != null) {
+            s.barText = null;
+            s.bar.update(1f, messages().raw("bossbar-auth", "sec", String.valueOf(total)));
+        }
     }
 
     /** Пометка авторизованным. */
@@ -164,6 +201,15 @@ public final class ElytrixAuthPlugin extends Plugin {
         s.state = AuthSession.State.OK;
         s.deadline = 0;
         s.requestId = -1;
+        if (s.bar != null) {
+            s.bar.remove();
+            s.bar = null;
+        }
+        s.barText = null;
+        ProxiedPlayer p = getProxy().getPlayer(s.uuid);
+        if (p != null) {
+            Visual.clearTitle(p);
+        }
     }
 
     /** Перевод на целевой сервер после входа (если он есть в конфиге прокси). */
@@ -189,50 +235,112 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
-    /** Кик по истечении времени на авторизацию / опрос результатов 2FA. */
+    /**
+     * Периодический тик: кики по таймеру, прогресс/текст боссбара, actionbar,
+     * опрос статусов 2FA и привязки Telegram.
+     */
     private void tick() {
         long now = now();
         for (AuthSession s : sessions.values()) {
             ProxiedPlayer p = getProxy().getPlayer(s.uuid);
-            if (p == null) {
-                sessions.remove(s.uuid, s);
+            if (p == null || !p.isConnected()) {
+                leave(s.uuid);
                 continue;
             }
             switch (s.state) {
                 case WAIT:
-                    if (s.deadline > 0 && now >= s.deadline) {
-                        p.disconnect("§cВремя на авторизацию истекло. Зайди снова.");
-                    }
+                    tickWait(s, p, now);
                     break;
-                case TG: {
-                    if (s.deadline > 0 && now >= s.deadline) {
-                        p.disconnect("§cВремя на авторизацию истекло. Зайди снова.");
-                        break;
-                    }
-                    String st = db.pollLoginRequest(s.requestId);
-                    if ("confirmed".equals(st)) {
-                        markAuthed(s);
-                        p.sendMessage("§aВход подтверждён в Telegram. Добро пожаловать!");
-                        connectTarget(p);
-                    } else if ("denied".equals(st)) {
-                        p.disconnect("§cВход отклонён в Telegram.");
-                    } else if ("expired".equals(st)) {
-                        s.state = AuthSession.State.WAIT;
-                        s.requestId = -1;
-                        p.sendMessage("§cКод подтверждения в Telegram истёк. Введи /login ещё раз.");
-                    }
+                case TG:
+                    tickTg(s, p, now);
                     break;
-                }
-                case OK: {
-                    if (s.linkId >= 0 && db.isLinkBound(s.linkId)) {
-                        s.linkId = -1;
-                        s.linkCode = null;
-                        p.sendMessage("§aTelegram успешно привязан к аккаунту §f" + s.nickname + "§a!");
-                        p.sendMessage("§7Теперь при входе после пароля нужно будет подтверждать вход в Telegram.");
-                    }
+                case OK:
+                    tickOk(s, p);
                     break;
+            }
+        }
+    }
+
+    private void tickWait(AuthSession s, ProxiedPlayer p, long now) {
+        if (s.deadline > 0) {
+            long left = s.deadline - now;
+            if (left <= 0) {
+                messages().kick(p, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
+                return;
+            }
+            updateBar(s, p, left);
+            // actionbar-подсказка, что вводить (видна при выключенном чате)
+            if (now - s.lastTipAt >= 1) {
+                s.lastTipAt = now;
+                if (s.needReg) {
+                    messages().actionbar(p, "actionbar-reg");
+                } else {
+                    messages().actionbar(p, "actionbar-login");
                 }
             }
+        }
+    }
+
+    private void tickTg(AuthSession s, ProxiedPlayer p, long now) {
+        if (s.deadline > 0 && now >= s.deadline) {
+            messages().kick(p, "kick-timeout-login");
+            return;
+        }
+        if (now - s.lastTipAt >= 1) {
+            s.lastTipAt = now;
+            messages().actionbar(p, "actionbar-tg");
+        }
+        updateBar(s, p, Math.max(0, s.deadline - now));
+
+        String st = db.pollLoginRequest(s.requestId);
+        if ("confirmed".equals(st)) {
+            markAuthed(s);
+            messages().chat(p, "tg-confirmed", "player", s.nickname);
+            connectTarget(p);
+        } else if ("denied".equals(st)) {
+            messages().kick(p, "kick-denied");
+        } else if ("expired".equals(st)) {
+            s.state = AuthSession.State.WAIT;
+            s.requestId = -1;
+            s.deadline = now + cfg.loginTimeout();
+            s.totalSec = cfg.loginTimeout();
+            messages().chat(p, "tg-expired");
+            // возвращаем интерфейс входа
+            if (s.bar != null) {
+                s.bar.remove();
+                s.bar = null;
+            }
+            showAuthUi(s);
+        }
+    }
+
+    private void tickOk(AuthSession s, ProxiedPlayer p) {
+        if (s.linkId >= 0 && db.isLinkBound(s.linkId)) {
+            s.linkId = -1;
+            s.linkCode = null;
+            messages().chat(p, "tg-linked", "player", s.nickname);
+            messages().chat(p, "tg-linked-advice");
+        }
+    }
+
+    /** Прогресс-бар с таймером: текст раз в секунду, здоровье — непрерывно. */
+    private void updateBar(AuthSession s, ProxiedPlayer p, long leftSec) {
+        Visual.BossBar bar = s.bar;
+        if (bar == null) {
+            return;
+        }
+        int sec = (int) Math.max(0, leftSec);
+        String key = s.state == AuthSession.State.TG ? "bossbar-tg" : "bossbar-auth";
+        String text = messages().raw(key, "sec", String.valueOf(sec));
+        float health = 1f;
+        if (s.totalSec > 0) {
+            health = (float) Math.max(0.0, Math.min(1.0, (double) sec / s.totalSec));
+        }
+        if (!text.equals(s.barText)) {
+            s.barText = text;
+            bar.update(health, text);
+        } else {
+            bar.update(health, null);
         }
     }
 
@@ -264,6 +372,20 @@ public final class ElytrixAuthPlugin extends Plugin {
 
     public void clearFails(String key) {
         failCounters.remove(key);
+    }
+
+    /** Сколько неверных попыток осталось у ключа (для подсказки в сообщении). */
+    public int failLeft(String key) {
+        long[] c = failCounters.get(key);
+        if (c == null) {
+            return cfg.maxTries();
+        }
+        long now = now();
+        if (now - c[1] > cfg.tryWindow()) {
+            failCounters.remove(key);
+            return cfg.maxTries();
+        }
+        return Math.max(0, cfg.maxTries() - (int) c[0]);
     }
 
     public static long now() {

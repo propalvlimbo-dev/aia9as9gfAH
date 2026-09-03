@@ -19,7 +19,7 @@ public final class CmdLogin extends Command {
     @Override
     public void execute(CommandSender sender, String[] args) {
         if (!(sender instanceof ProxiedPlayer)) {
-            sender.sendMessage("Команда доступна только игрокам.");
+            sender.sendMessage(plugin.messages().raw("cmd-only-player"));
             return;
         }
         ProxiedPlayer p = (ProxiedPlayer) sender;
@@ -28,48 +28,53 @@ public final class CmdLogin extends Command {
             return;
         }
         if (s.isAuthed()) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Ты уже авторизован.");
+            plugin.messages().chat(p, "already-authed");
             return;
         }
         if (s.state == AuthSession.State.TG) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Пароль уже принят. Подтверди вход в Telegram.");
+            plugin.messages().chat(p, "tg-already");
             return;
         }
         if (args.length != 1) {
-            p.sendMessage("§eИспользование: §f/login <пароль>");
+            plugin.messages().chat(p, "usage-login");
             return;
         }
 
         // защита от перебора: по нику и по IP
         if (plugin.isFailBlocked("nick:" + s.nickname.toLowerCase()) || plugin.isFailBlocked("ip:" + s.ip)) {
-            p.disconnect("§cСлишком много неудачных попыток входа. Подожди немного и зайди снова.");
+            plugin.messages().kick(p, "kick-too-many-tries");
             return;
         }
 
         Database.PlayerRow row = plugin.db().findPlayer(s.nickname).orElse(null);
-        if (row == null) {
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Аккаунт не найден. Зарегистрируйся: §f/reg <пароль> <пароль>");
+        if (row == null || row.passwordHash == null) {
+            plugin.messages().chat(p, "not-registered");
             return;
         }
-        if (row.passwordHash == null || !PasswordHash.verify(args[0], row.passwordHash)) {
+        if (!PasswordHash.verify(args[0], row.passwordHash)) {
             plugin.registerFail("nick:" + s.nickname.toLowerCase());
             plugin.registerFail("ip:" + s.ip);
-            p.sendMessage(ElytrixAuthPlugin.ERR + "Неверный пароль.");
+            plugin.messages().chat(p, "wrong-password",
+                    "left", String.valueOf(plugin.failLeft("ip:" + s.ip)));
             return;
         }
         plugin.clearFails("nick:" + s.nickname.toLowerCase());
         plugin.clearFails("ip:" + s.ip);
 
-        try {
-            plugin.db().updateLastLogin(s.uuid, s.ip, ElytrixAuthPlugin.now());
-        } catch (SQLException e) {
-            plugin.getLogger().severe("updateLastLogin error: " + e.getMessage());
+        // сессия: при перезаходе с того же IP пароль не спросим
+        if (plugin.cfg().sessionsEnabled()) {
+            try {
+                plugin.db().updateSession(s.uuid, s.ip,
+                        ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds());
+            } catch (SQLException e) {
+                plugin.getLogger().severe("updateSession(login) error: " + e.getMessage());
+            }
         }
 
         if (row.tgId == null) {
             // нет привязки — впускаем сразу
             plugin.markAuthed(s);
-            p.sendMessage("§aВход выполнен. Добро пожаловать, §f" + s.nickname + "§a!");
+            plugin.messages().chat(p, "login-ok", "player", s.nickname);
             plugin.connectTarget(p);
         } else {
             // 2FA: пароль верный — ждём кнопку в Telegram
@@ -79,10 +84,23 @@ public final class CmdLogin extends Command {
                 s.requestId = reqId;
                 s.state = AuthSession.State.TG;
                 s.deadline = ElytrixAuthPlugin.now() + plugin.cfg().login2faTtl();
-                p.sendMessage("§eПароль верный. Подтверди вход кнопкой в Telegram (в течение "
-                        + plugin.cfg().login2faTtl() + " сек).");
+                s.totalSec = plugin.cfg().login2faTtl();
+                plugin.messages().chat(p, "tg-wait-confirm", "ttl", String.valueOf(plugin.cfg().login2faTtl()));
+                // переключаем боссбар/подсказки на ожидание Telegram
+                if (s.bar != null) {
+                    s.bar.remove();
+                    s.bar = null;
+                }
+                s.barText = null;
+                Visual.BossBar bar = Visual.startBossBar(p,
+                        plugin.messages().raw("bossbar-tg",
+                                "sec", String.valueOf(plugin.cfg().login2faTtl())));
+                if (bar != null) {
+                    s.bar = bar;
+                    s.bar.update(1f, null);
+                }
             } catch (SQLException e) {
-                p.sendMessage(ElytrixAuthPlugin.ERR + "Ошибка базы данных, попробуй ещё раз.");
+                plugin.messages().chat(p, "db-error");
                 plugin.getLogger().severe("createLoginRequest error: " + e.getMessage());
             }
         }
