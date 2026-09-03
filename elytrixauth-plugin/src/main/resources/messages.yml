@@ -1,113 +1,120 @@
-# =============================================================
-# ElytrixAuth — все сообщения плагина.
-# Файл создаётся автоматически при первом запуске в папке
-# plugins/ElytrixAuth/ — править там, потом перезапуск прокси.
-#
-# Цвета: &-коды (как в Minecraft), hex — форматом &#RRGGBB.
-# {prefix} — префикс из ключа prefix. Остальные плейсхолдеры
-# перечислены у каждого ключа комментарием.
-# =============================================================
-
 prefix: '&f☁ &#F8BEFBᴇ&#F6BEFBʟ&#F3BEFBʏ&#F1BFFBᴛ&#EEBFFBʀ&#ECBFFBɪ&#E9BFFBx &7»'
 
-# ---------- Экран при входе (title по центру + чат) ----------
+# ---------- экран при входе (title в центре) ----------
 
-# Кто зашёл впервые (в базе нет аккаунта)
-join-title-reg: '&f☁ &#F8BEFBРегистрация'
-join-subtitle-reg: '&fВведи пароль дважды: &b/reg <пароль> <пароль>'
-# {min} — мин. длина пароля
+join-title-reg: '&#F8BEFB&lРегистрация'
+join-subtitle-reg: '&fКоманда: &#F8BEFB/reg &7<пароль> <пароль>'
+join-title-login: '&#F8BEFB&lВход'
+join-subtitle-login: '&fКоманда: &#F8BEFB/login &7<пароль>'
+
 join-msg-reg:
-  - ''
-  - '{prefix} &fПохоже, ты у нас &bвпервые&f.'
-  - '&fЧтобы попасть на сервер — &bзарегистрируйся&f: введи пароль дважды:'
-  - '&f   &b/reg &f<&7пароль&f> &f<&7пароль&f>'
-  - '&7Пароль: от &f{min} &7символов, без пробелов.'
-  - '&7Совет: привяжи Telegram (&f/addtg&7) — вход будет в 2 клика.'
-  - ''
+  - '{prefix} &#F8BEFBРегистрация'
+  - '&#F8BEFB&l┃ &fТы у нас впервые — создай аккаунт'
+  - '&#F8BEFB&l┃ &fКоманда: &#F8BEFB/reg <пароль> <пароль>'
+  - '&#F8BEFB&l┃ &fПароль: &7от {min} символов'
+  - '&7● &fTelegram: &#F8BEFB/addtg &7— вход в 2 клика'
 
-# Зарегистрирован, но не вошёл (сессии нет)
-join-title-login: '&f☁ &#F8BEFBВход'
-join-subtitle-login: '&fВведи пароль: &b/login <пароль>'
 join-msg-login:
-  - ''
-  - '{prefix} &fС возвращением, &b{player}&f!'
-  - '&fВведи свой пароль, чтобы войти:'
-  - '&f   &b/login &f<&7пароль&f>'
-  - '&7На авторизацию даётся &f{timeout} &7секунд.'
-  - ''
+  - '{prefix} &#F8BEFBВход'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fКоманда: &#F8BEFB/login <пароль>'
+  - '&#F8BEFB&l┃ &fВремя: &7{timeout} сек'
 
-# Сессия была, но IP изменился — показать перед join-msg-login
 session-ip-changed:
-  - '&7↳ Сессия сброшена: изменился твой IP.'
-  - '&7  Введи пароль ещё раз — и всё будет как раньше.'
+  - '{prefix} &cСессия сброшена'
+  - '&#F8BEFB&l┃ &fПричина: &cизменился IP'
+  - '&#F8BEFB&l┃ &fДействие: &#F8BEFBвведи пароль'
 
-# Автовход по активной сессии (тот же IP, срок не истёк)
 auto-login:
-  - ''
-  - '{prefix} &aСессия активна — вход без пароля. &7(тот же IP)'
-  - '&fДобро пожаловать, &b{player}&f! Приятной игры.'
-  - ''
+  - '{prefix} &aАвтовход'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fСтатус: &aсессия активна'
 
-# ---- Подсказки над хотбаром (actionbar) ----
-actionbar-reg: '&fРегистрация: &b/reg <пароль> <пароль>'
-actionbar-login: '&fВход: &b/login <пароль>'
-actionbar-tg: '&fПодтверди вход в &bTelegram&f!'
+# ---------- подсказки над хотбаром ----------
+
+actionbar-reg: '&fРегистрация: &#F8BEFB/reg &7<пароль> <пароль>'
+actionbar-login: '&fВход: &#F8BEFB/login &7<пароль>'
+actionbar-tg: '&fПодтверждение: &#F8BEFBTelegram &7— кнопка «Войти»'
 actionbar-authed: '&aДобро пожаловать, &f{player}&a!'
 
-# ---- Боссбар с таймером ----
-# {sec} — осталось секунд
-bossbar-auth: '&#F8BEFBАвторизация &7• &fосталось: &#F8BEFB{sec}&f с'
-bossbar-tg: '&#F8BEFBПодтверждение в Telegram &7• &fосталось: &#F8BEFB{sec}&f с'
+# ---------- пурпурный bossbar с таймером ----------
 
-# ---- Кики ----
-kick-timeout-reg: '&cВремя на регистрацию истекло.\n\n&7Зайди заново и введи:\n&b/reg <пароль> <пароль>'
-kick-timeout-login: '&cВремя на вход истекло.\n\n&7Зайди заново и введи:\n&b/login <пароль>'
-kick-too-many-tries: '&cСлишком много неверных попыток.\n\n&7Подожди немного и попробуй снова.'
-kick-denied: '&cВход отклонён в Telegram.\n\n&7Если это был ты — попробуй ещё раз.'
+bossbar-auth: '&#F8BEFB&lАвторизация &7• &fосталось: &f{sec} &7сек'
+bossbar-tg: '&#F8BEFB&lПодтверждение в Telegram &7• &fосталось: &f{sec} &7сек'
 
-# ---- Блокировки до авторизации (подсказка зависит от того, кто зашёл) ----
-chat-blocked-reg: '{prefix} &7Чат откроется после &bрегистрации&7: &f/reg <пароль> <пароль>'
-chat-blocked-login: '{prefix} &7Чат откроется после &bвхода&7: &f/login <пароль>'
-cmd-blocked-reg: '{prefix} &cСначала &bзарегистрируйся&c: &f/reg <пароль> <пароль>'
-cmd-blocked-login: '{prefix} &cСначала &bвойди&c: &f/login <пароль>'
+# ---------- кики ----------
 
-# ---- Общие ошибки команд ----
-cmd-only-player: '{prefix} &cКоманда доступна только игроку.'
-usage-reg: '{prefix} &eИспользование: &f/reg <пароль> <пароль>'
-usage-login: '{prefix} &eИспользование: &f/login <пароль>'
-already-authed: '{prefix} &cТы уже авторизован.'
-db-error: '{prefix} &cОшибка базы данных. Попробуй ещё раз.'
-pass-mismatch: '{prefix} &cПароли не совпадают. Введи пароль дважды одинаково.'
-# {min} / {max}
-pass-short: '{prefix} &cПароль слишком короткий. Минимум &f{min} &cсимволов.'
-pass-long: '{prefix} &cПароль слишком длинный. Максимум &f{max} &cсимволов.'
-not-registered: '{prefix} &cАккаунт не найден. Зарегистрируйся: &f/reg <пароль> <пароль>'
-account-exists: '{prefix} &cАккаунт уже зарегистрирован. Введи &f/login <пароль>&c.'
-wrong-password: '{prefix} &cНеверный пароль. &7Попыток осталось: &f{left}&7.'
-wrong-password-unknown: '{prefix} &cНеверный пароль.'
+kick-timeout-reg: '&#F8BEFB&lВремя вышло\n\n&cРегистрация не завершена\n\n&7Зайди заново и введи:\n&#F8BEFB/reg <пароль> <пароль>'
+kick-timeout-login: '&#F8BEFB&lВремя вышло\n\n&cВход не выполнен\n\n&7Зайди заново и введи:\n&#F8BEFB/login <пароль>'
+kick-too-many-tries: '&#F8BEFB&lВход заблокирован\n\n&cСлишком много неверных попыток\n\n&7Подожди немного и зайди снова'
+kick-denied: '&#F8BEFB&lВход отклонён\n\n&cОтклонено в Telegram\n\n&7Если это был ты — попробуй ещё раз'
 
-# ---- Регистрация / вход успешно ----
+# ---------- блокировки до авторизации ----------
+
+chat-blocked-reg: '{prefix} &7Чат откроется после &fрегистрации&7: &#F8BEFB/reg &7<пароль> <пароль>'
+chat-blocked-login: '{prefix} &7Чат откроется после &fвхода&7: &#F8BEFB/login &7<пароль>'
+cmd-blocked-reg: '{prefix} &cКоманда недоступна. Сначала &fзарегистрируйся&c: &#F8BEFB/reg &7<пароль> <пароль>'
+cmd-blocked-login: '{prefix} &cКоманда недоступна. Сначала &fвойди&c: &#F8BEFB/login &7<пароль>'
+
+# ---------- общие ошибки команд ----------
+
+cmd-only-player: '{prefix} &cКоманда доступна только игроку'
+usage-reg: '{prefix} &fИспользование: &#F8BEFB/reg &7<пароль> <пароль>'
+usage-login: '{prefix} &fИспользование: &#F8BEFB/login &7<пароль>'
+already-authed: '{prefix} &cТы уже авторизован'
+db-error: '{prefix} &cОшибка базы данных. Попробуй ещё раз'
+pass-mismatch: '{prefix} &cПароли не совпадают. &7Введи пароль дважды одинаково'
+pass-short: '{prefix} &cПароль слишком короткий. &7Минимум: &f{min} &7символов'
+pass-long: '{prefix} &cПароль слишком длинный. &7Максимум: &f{max} &7символов'
+not-registered: '{prefix} &cАккаунт не найден. &7Создай: &#F8BEFB/reg &7<пароль> <пароль>'
+account-exists: '{prefix} &cАккаунт уже существует. &7Войди: &#F8BEFB/login &7<пароль>'
+wrong-password: '{prefix} &cНеверный пароль &7• &fосталось: &#F8BEFB{left}'
+wrong-password-unknown: '{prefix} &cНеверный пароль'
+
+# ---------- регистрация / вход ----------
+
 register-ok:
-  - ''
-  - '{prefix} &aРегистрация успешна! Добро пожаловать, &b{player}&a!'
-  - '&7Совет: привяжи Telegram командой &f/addtg&7 — вход будет в 2 клика.'
-  - ''
-login-ok: '{prefix} &aВход выполнен. Добро пожаловать, &b{player}&a!'
-tg-wait-confirm: '{prefix} &eПароль верный. Подтверди вход в &bTelegram&e (кнопка в боте, &f{ttl}&e сек).'
-tg-confirmed: '{prefix} &aВход подтверждён в &bTelegram&a. Добро пожаловать, &b{player}&a!'
-tg-expired: '{prefix} &cЗапрос подтверждения истёк. Введи &f/login &cещё раз.'
-tg-already: '{prefix} &cПароль уже принят. Подтверди вход в Telegram.'
+  - '{prefix} &aРегистрация успешна'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fСтатус: &aаккаунт создан'
+  - '&7● &fTelegram: &#F8BEFB/addtg &7— вход в 2 клика'
 
-# ---- Привязка Telegram (/addtg) ----
-addtg-not-authed: '{prefix} &cСначала авторизуйся: &f/login <пароль>'
-addtg-db-error: '{prefix} &cНе удалось создать код привязки. Попробуй ещё раз.'
+login-ok:
+  - '{prefix} &aВход выполнен'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fСтатус: &aавторизован'
+
+# ---------- вход с подтверждением в Telegram ----------
+
+tg-wait-confirm:
+  - '{prefix} &aПароль верный'
+  - '&#F8BEFB&l┃ &fСтатус: &aожидает подтверждения'
+  - '&7● &fКнопка «Войти» уже в Telegram &7• &f{ttl} &7сек'
+
+tg-confirmed:
+  - '{prefix} &aВход подтверждён'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fСтатус: &aавторизован в Telegram'
+
+tg-expired:
+  - '{prefix} &cЗапрос истёк'
+  - '&#F8BEFB&l┃ &fДействие: &#F8BEFB/login &7<пароль> &7— ещё раз'
+
+tg-already: '{prefix} &7Пароль уже принят — подтверди вход в &fTelegram&7: кнопка «Войти»'
+
+# ---------- привязка Telegram (/addtg) ----------
+
+addtg-not-authed: '{prefix} &cСначала войди: &#F8BEFB/login &7<пароль>'
+addtg-db-error: '{prefix} &cНе удалось создать код. Попробуй ещё раз'
 addtg-msg:
-  - ''
-  - '{prefix} &fПривязка &bTelegram&f:'
-  - '&7 1) Напиши боту сервера в Telegram (и нажми Start).'
-  - '&7 2) Отправь ему команду: &f/link {code}'
-  - '&7 3) Готово — теперь вход будет в 2 клика.'
-  - '&7Код действует &f{ttl} &7секунд.'
-  - ''
-tg-linked: '{prefix} &aTelegram успешно привязан к аккаунту &b{player}&a!'
-tg-linked-advice: '&7Теперь после пароля нужно подтверждать вход кнопкой в Telegram.'
+  - '{prefix} &#F8BEFBПривязка Telegram'
+  - '&#F8BEFB&l┃ &fКод: &#F8BEFB{code}'
+  - '&#F8BEFB&l┃ &fДействие: &7отправь боту &f/link {code}'
+  - '&#F8BEFB&l┃ &fСрок: &7{ttl} сек'
+  - '&7● &fСначала напиши боту любое сообщение (&7Start&f)'
+
+tg-linked:
+  - '{prefix} &aTelegram привязан'
+  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB&l┃ &fСтатус: &aаккаунт защищён'
+  - '&7● &fВход: &f/login &7+ кнопка в Telegram'

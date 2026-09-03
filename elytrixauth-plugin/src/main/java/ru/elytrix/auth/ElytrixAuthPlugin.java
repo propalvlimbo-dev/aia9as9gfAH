@@ -331,7 +331,7 @@ public final class ElytrixAuthPlugin extends Plugin {
                 }
             }
             markAuthed(s);
-            messages().chat(p, "tg-confirmed", "player", s.nickname);
+            messages().chatList(p, "tg-confirmed", "player", s.nickname);
             connectTarget(p);
         } else if ("denied".equals(st)) {
             messages().kick(p, "kick-denied");
@@ -340,7 +340,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.requestId = -1;
             s.deadline = now + cfg.loginTimeout();
             s.totalSec = cfg.loginTimeout();
-            messages().chat(p, "tg-expired");
+            messages().chatList(p, "tg-expired");
             // возвращаем интерфейс входа
             if (s.bar != null) {
                 s.bar.remove();
@@ -354,8 +354,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         if (s.linkId >= 0 && db.isLinkBound(s.linkId)) {
             s.linkId = -1;
             s.linkCode = null;
-            messages().chat(p, "tg-linked", "player", s.nickname);
-            messages().chat(p, "tg-linked-advice");
+            messages().chatList(p, "tg-linked", "player", s.nickname);
         }
     }
 

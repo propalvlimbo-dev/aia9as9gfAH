@@ -59,7 +59,7 @@ public final class Messages {
                     String t = line.trim();
                     if (currentKey != null && t.startsWith("- ")) {
                         m.data.computeIfAbsent(currentKey, k -> new ArrayList<>())
-                                .add(unescape(t.substring(2).trim()));
+                                .add(unescape(stripQuotes(t.substring(2).trim())));
                     }
                     continue;
                 }

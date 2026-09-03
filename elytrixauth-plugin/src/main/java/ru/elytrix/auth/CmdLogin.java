@@ -83,7 +83,7 @@ public final class CmdLogin extends Command {
                 s.state = AuthSession.State.TG;
                 s.deadline = ElytrixAuthPlugin.now() + plugin.cfg().login2faTtl();
                 s.totalSec = plugin.cfg().login2faTtl();
-                plugin.messages().chat(p, "tg-wait-confirm", "ttl", String.valueOf(plugin.cfg().login2faTtl()));
+                plugin.messages().chatList(p, "tg-wait-confirm", "ttl", String.valueOf(plugin.cfg().login2faTtl()));
                 // переключаем боссбар/подсказки на ожидание Telegram
                 if (s.bar != null) {
                     s.bar.remove();
