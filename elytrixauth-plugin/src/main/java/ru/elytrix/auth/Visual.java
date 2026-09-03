@@ -69,6 +69,8 @@ public final class Visual {
      * Пурпурный bossbar. Хендл позволяет обновлять текст/прогресс и убирать бар.
      * Если прокси не умеет слать пакет — возвращается null (работаем без бара).
      */
+    private static boolean barWarned = false;
+
     public static BossBar startBossBar(ProxiedPlayer p, String initialText) {
         try {
             Class<?> cls = Class.forName("net.md_5.bungee.protocol.packet.BossBar");
@@ -84,12 +86,18 @@ public final class Visual {
             cls.getMethod("setFlags", byte.class).invoke(bar, (byte) 0);
 
             Object unsafe = findUnsafe(p);
-            Object send = unsafe.getClass().getMethod("sendPacket", defined).invoke(unsafe, bar);
-            if (send != null) {
-                // не должно быть null, но на всякий случай
+            unsafe.getClass().getMethod("sendPacket", defined).invoke(unsafe, bar);
+            if (!barWarned) {
+                barWarned = true;
             }
             return new BossBar(cls, unsafe, id);
         } catch (Throwable t) {
+            if (!barWarned) {
+                barWarned = true;
+                System.err.println("[ElytrixAuth] BossBar недоступен на этом прокси ("
+                        + t.getClass().getSimpleName() + ": " + t.getMessage()
+                        + ") — время показываем в actionbar.");
+            }
             return null; // прокси без поддержки пакета — работаем без боссбара
         }
     }

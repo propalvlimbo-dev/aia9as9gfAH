@@ -71,7 +71,8 @@ public final class ElytrixAuthListener implements Listener {
         // 2) новичок или вход по паролю
         if (row == null || row.passwordHash == null) {
             s.needReg = true;
-            plugin.messages().chatList(p, "join-msg-reg", "min", String.valueOf(plugin.cfg().minPassword()));
+            plugin.messages().chatList(p, "join-msg-reg",
+                    "timeout", String.valueOf(plugin.cfg().loginTimeout()));
             Visual.title(p, plugin.messages().raw("join-title-reg"),
                     plugin.messages().raw("join-subtitle-reg"));
         } else {
@@ -126,16 +127,10 @@ public final class ElytrixAuthListener implements Listener {
         ProxiedPlayer p = e.getPlayer();
         AuthSession s = plugin.session(p.getUniqueId());
         if (s != null && s.isAuthed()) {
-            // авторизованный (например, автовход по сессии): на auth его не ведём —
-            // если цель — auth, сразу правим на target, чтобы не мелькал на входной карте
-            ServerInfo auth = plugin.authServerInfo();
-            if (auth != null && e.getTarget() != null
-                    && e.getTarget().getName().equalsIgnoreCase(auth.getName())) {
-                ServerInfo target = plugin.proxy().getServerInfo(plugin.cfg().targetServer());
-                if (target != null) {
-                    e.setTarget(target);
-                }
-            }
+            // авторизованный (в т.ч. автовход по сессии): не трогаем маршрут —
+            // если его всё же занесло на auth, доведём до target после подключения
+            // (onServerConnected), чтобы не было двух конкурирующих connect-запросов
+            // и сообщения «Подключение к этому серверу уже выполняется».
             return;
         }
         // неавторизованный: разрешаем только auth-сервер

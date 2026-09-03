@@ -40,6 +40,14 @@ public final class AuthSession {
     public volatile long lastTipAt = 0;
     /** для анти-спама сообщений о блокировке чата. */
     public volatile long chatTipAt = 0;
+    /** следующее периодическое напоминание «введи пароль» (эпоха-мс). */
+    public volatile long remindAt = 0;
+    /** защита от двойного connect-запроса (эпоха-мс последнего). */
+    public volatile long lastConnectAt = 0;
+    /** когда игрок авторизовался (для одноразовой подсказки про Telegram). */
+    public volatile long authedAt = 0;
+    /** одноразовая подсказка про /addtg уже показана. */
+    public volatile boolean tgHintShown = false;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 

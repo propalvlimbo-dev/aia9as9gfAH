@@ -106,6 +106,13 @@ public final class ElytrixAuthPlugin extends Plugin {
         getLogger().info("Сессии: " + (cfg.sessionsEnabled() ? "вкл"
                 + " (срок " + (cfg.sessionMaxSeconds() / 3600) + " ч, проверка IP: " + cfg.sessionCheckIp() + ")"
                 : "выкл"));
+        try {
+            Class.forName("net.md_5.bungee.protocol.packet.BossBar");
+            getLogger().info("BossBar: пакет найден — таймер на полосе здоровья будет работать.");
+        } catch (Throwable t) {
+            getLogger().warning("BossBar: пакет не найден на этом прокси — время авторизации "
+                    + "будет показываться в actionbar над хотбаром.");
+        }
         getLogger().info("API-секрет для бота (в .env бота API_KEY): " + cfg.apiSecret());
     }
 
@@ -204,6 +211,9 @@ public final class ElytrixAuthPlugin extends Plugin {
         s.state = AuthSession.State.OK;
         s.deadline = 0;
         s.requestId = -1;
+        s.authedAt = now();
+        s.tgHintShown = false;
+        s.remindAt = 0;
         if (s.bar != null) {
             s.bar.remove();
             s.bar = null;
@@ -216,11 +226,33 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
-    /** Перевод на целевой сервер после входа (если он есть в конфиге прокси). */
+    /** Перевод на целевой сервер после входа (если он есть в конфиге прокси).
+     *  С защитой от двойного запроса: если игрок уже на target или connect
+     *  к target был инициирован < 2.5 сек назад — повторно не шлём. */
     public void connectTarget(ProxiedPlayer p) {
-        ServerInfo target = getProxy().getServerInfo(cfg.targetServer());
-        if (target != null) {
+        try {
+            if (p == null || !p.isConnected()) {
+                return;
+            }
+            ServerInfo target = getProxy().getServerInfo(cfg.targetServer());
+            if (target == null) {
+                return;
+            }
+            Server cur = p.getServer();
+            if (cur != null && cur.getInfo() != null
+                    && cur.getInfo().getName().equalsIgnoreCase(target.getName())) {
+                return; // уже на target
+            }
+            AuthSession s = sessions.get(p.getUniqueId());
+            long ms = System.currentTimeMillis();
+            if (s != null) {
+                if (ms - s.lastConnectAt < 2500) {
+                    return; // connect уже идёт
+                }
+                s.lastConnectAt = ms;
+            }
             p.connect(target);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -234,14 +266,13 @@ public final class ElytrixAuthPlugin extends Plugin {
                 return;
             }
             if (curInfo != null && curInfo.getName().equalsIgnoreCase(target.getName())) {
-                return;
+                return; // уже на target
             }
             ServerInfo auth = authServerInfo();
-            if (curInfo != null && auth != null
-                    && !curInfo.getName().equalsIgnoreCase(auth.getName())) {
-                return; // уже на каком-то обычном сервере — не трогаем
+            if (curInfo == null || (auth != null
+                    && curInfo.getName().equalsIgnoreCase(auth.getName()))) {
+                connectTarget(p);
             }
-            p.connect(target);
         } catch (Throwable ignored) {
         }
     }
@@ -295,14 +326,22 @@ public final class ElytrixAuthPlugin extends Plugin {
                 return;
             }
             updateBar(s, p, left);
-            // actionbar-подсказка, что вводить (видна при выключенном чате)
-            if (now - s.lastTipAt >= 1) {
-                s.lastTipAt = now;
-                if (s.needReg) {
-                    messages().actionbar(p, "actionbar-reg");
-                } else {
-                    messages().actionbar(p, "actionbar-login");
+            long ms = System.currentTimeMillis();
+            // периодическое напоминание прямо в чат (раз в ~10 сек, не чаще)
+            if (ms - s.remindAt >= 10_000) {
+                s.remindAt = ms;
+                messages().chat(p, s.needReg ? "remind-reg" : "remind-login",
+                        "sec", String.valueOf(left));
+            }
+            // подсказка над хотбаром (раз в 2 сек) — видна при выключенном чате
+            if (ms - s.lastTipAt >= 2000) {
+                s.lastTipAt = ms;
+                String tip = messages().raw(s.needReg ? "actionbar-reg" : "actionbar-login");
+                if (s.bar == null) {
+                    // боссбар недоступен — время показываем прямо в actionbar
+                    tip += " &8• &f" + left + "&7 сек";
                 }
+                Visual.actionbar(p, tip);
             }
         }
     }
@@ -312,9 +351,14 @@ public final class ElytrixAuthPlugin extends Plugin {
             messages().kick(p, "kick-timeout-login");
             return;
         }
-        if (now - s.lastTipAt >= 1) {
-            s.lastTipAt = now;
-            messages().actionbar(p, "actionbar-tg");
+        long ms = System.currentTimeMillis();
+        if (ms - s.lastTipAt >= 2000) {
+            s.lastTipAt = ms;
+            String tip = messages().raw("actionbar-tg");
+            if (s.bar == null && s.deadline > 0) {
+                tip += " &8• &f" + Math.max(0, s.deadline - now) + "&7 сек";
+            }
+            Visual.actionbar(p, tip);
         }
         updateBar(s, p, Math.max(0, s.deadline - now));
 
@@ -351,10 +395,30 @@ public final class ElytrixAuthPlugin extends Plugin {
     }
 
     private void tickOk(AuthSession s, ProxiedPlayer p) {
+        long now = now();
+        // одноразовая подсказка про /addtg — только после входа и если TG не привязан
+        if (!s.tgHintShown && now - s.authedAt >= 3) {
+            s.tgHintShown = true;
+            try {
+                Database.PlayerRow r = db.findPlayer(s.nickname).orElse(null);
+                if (r != null && r.tgId == null && s.linkId < 0) {
+                    messages().chatList(p, "hint-tg");
+                }
+            } catch (Exception ex) {
+                pluginLogWarning("hint-tg: " + ex.getMessage());
+            }
+        }
         if (s.linkId >= 0 && db.isLinkBound(s.linkId)) {
             s.linkId = -1;
             s.linkCode = null;
             messages().chatList(p, "tg-linked", "player", s.nickname);
+        }
+    }
+
+    private void pluginLogWarning(String msg) {
+        try {
+            getLogger().warning(msg);
+        } catch (Throwable ignored) {
         }
     }
 
