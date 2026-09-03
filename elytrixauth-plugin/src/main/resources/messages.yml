@@ -9,18 +9,18 @@ prefix: '&f☁ &#F8BEFBᴇ&#F6BEFBʟ&#F3BEFBʏ&#F1BFFBᴛ&#EEBFFBʀ&#ECBFFBɪ&#E
 
 # ---------- экран при входе (title по центру, видно при выключенном чате) ----------
 
-join-title-reg: '&#F8BEFB&lРегистрация'
+join-title-reg: '&#F8BEFBРегистрация'
 join-subtitle-reg: '&fКоманда: &#F8BEFB/reg &7<пароль> <пароль>'
-join-title-login: '&#F8BEFB&lВход'
+join-title-login: '&#F8BEFBВход'
 join-subtitle-login: '&fКоманда: &#F8BEFB/login &7<пароль>'
 
 # Первое сообщение при заходе (аккаунта нет в базе)
 join-msg-reg:
   - ''
   - '{prefix} &#F8BEFBРегистрация'
-  - '&#F8BEFB&l┃ &fТебя нет в базе &7— создай аккаунт'
-  - '&#F8BEFB&l┃ &fКоманда: &#F8BEFB/reg &7<пароль> <пароль>'
-  - '&#F8BEFB&l┃ &fПароль: &7от &f{min}&7 символов'
+  - '&#F8BEFB┃ &fТебя нет в базе &7— создай аккаунт'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/reg &7<пароль> <пароль>'
+  - '&#F8BEFB┃ &fПароль: &7от &f{min}&7 символов'
   - '&7● &fВремя на регистрацию: &#F8BEFB{timeout}&7 сек'
   - ''
 
@@ -28,23 +28,23 @@ join-msg-reg:
 join-msg-login:
   - ''
   - '{prefix} &#F8BEFBВход'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fКоманда: &#F8BEFB/login &7<пароль>'
-  - '&#F8BEFB&l┃ &fВремя: &#F8BEFB{timeout}&7 сек'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/login &7<пароль>'
+  - '&#F8BEFB┃ &fВремя: &#F8BEFB{timeout}&7 сек'
   - ''
 
 # Сессия была, но IP сменился — перед сообщением входа
 session-ip-changed:
   - '{prefix} &cСессия сброшена'
-  - '&#F8BEFB&l┃ &fПричина: &cизменился IP'
-  - '&#F8BEFB&l┃ &fДействие: &7введи пароль ещё раз'
+  - '&#F8BEFB┃ &fПричина: &cизменился IP'
+  - '&#F8BEFB┃ &fДействие: &7введи пароль ещё раз'
 
 # Автовход по активной сессии (тот же IP, срок не истёк)
 auto-login:
   - ''
   - '{prefix} &aАвтовход'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fСтатус: &aсессия активна'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fСтатус: &aсессия активна'
   - '&7● &fПриятной игры! &#F8BEFBelytrix.pw'
   - ''
 
@@ -62,15 +62,15 @@ actionbar-authed: '&aДобро пожаловать, &f{player}&a!'
 
 # ---------- bossbar с таймером ----------
 
-bossbar-auth: '&#F8BEFB&lАвторизация &7• &fосталось: &#F8BEFB{sec}&7 сек'
-bossbar-tg: '&#F8BEFB&lПодтверждение в Telegram &7• &fосталось: &#F8BEFB{sec}&7 сек'
+bossbar-auth: '&#F8BEFBАвторизация &7• &fосталось: &#F8BEFB{sec}&7 сек'
+bossbar-tg: '&#F8BEFBПодтверждение в Telegram &7• &fосталось: &#F8BEFB{sec}&7 сек'
 
 # ---------- кики ----------
 
-kick-timeout-reg: '&#F8BEFB&lРегистрация\n\n&cВремя вышло — ты не успел создать аккаунт\n\n&7Зайди заново и введи:\n&#F8BEFB/reg <пароль> <пароль>'
-kick-timeout-login: '&#F8BEFB&lВход\n\n&cВремя вышло — ты не успел войти\n\n&7Зайди заново и введи:\n&#F8BEFB/login <пароль>'
-kick-too-many-tries: '&#F8BEFB&lВход заблокирован\n\n&cСлишком много неверных попыток\n\n&7Подожди немного и зайди снова'
-kick-denied: '&#F8BEFB&lВход отклонён\n\n&cОтклонено в Telegram\n\n&7Если это был ты — зайди и попробуй ещё раз'
+kick-timeout-reg: '&#F8BEFBРегистрация\n\n&cВремя вышло — ты не успел создать аккаунт\n\n&7Зайди заново и введи:\n&#F8BEFB/reg <пароль> <пароль>'
+kick-timeout-login: '&#F8BEFBВход\n\n&cВремя вышло — ты не успел войти\n\n&7Зайди заново и введи:\n&#F8BEFB/login <пароль>'
+kick-too-many-tries: '&#F8BEFBВход заблокирован\n\n&cСлишком много неверных попыток\n\n&7Подожди немного и зайди снова'
+kick-denied: '&#F8BEFBВход отклонён\n\n&cОтклонено в Telegram\n\n&7Если это был ты — зайди и попробуй ещё раз'
 
 # ---------- блокировки чата и команд ----------
 
@@ -99,16 +99,16 @@ wrong-password-unknown: '{prefix} &cНеверный пароль'
 register-ok:
   - ''
   - '{prefix} &aРегистрация успешна'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fСтатус: &aаккаунт создан'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fСтатус: &aаккаунт создан'
   - '&7● &fПриятной игры! &#F8BEFBelytrix.pw'
   - ''
 
 login-ok:
   - ''
   - '{prefix} &aВход выполнен'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fСтатус: &aавторизован'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fСтатус: &aавторизован'
   - '&7● &fПриятной игры! &#F8BEFBelytrix.pw'
   - ''
 
@@ -116,14 +116,14 @@ login-ok:
 
 tg-wait-confirm:
   - '{prefix} &aПароль верный'
-  - '&#F8BEFB&l┃ &fСтатус: &aожидает подтверждения'
+  - '&#F8BEFB┃ &fСтатус: &aожидает подтверждения'
   - '&7● &fОткрой Telegram и нажми &a«Войти»&7 • &f{ttl}&7 сек'
 
 tg-confirmed:
   - ''
   - '{prefix} &aВход подтверждён'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fСтатус: &aавторизован в Telegram'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fСтатус: &aавторизован в Telegram'
   - '&7● &fПриятной игры! &#F8BEFBelytrix.pw'
   - ''
 
@@ -135,8 +135,8 @@ tg-already: '{prefix} &7Пароль уже принят &7— жди кнопк
 hint-tg:
   - ''
   - '{prefix} &#F8BEFBЗащита аккаунта'
-  - '&#F8BEFB&l┃ &fСтатус: &7Telegram не привязан'
-  - '&#F8BEFB&l┃ &fКоманда: &#F8BEFB/addtg'
+  - '&#F8BEFB┃ &fСтатус: &7Telegram не привязан'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/addtg'
   - '&7● &fВход с подтверждением в Telegram &8| &#F8BEFBelytrix.pw'
   - ''
 
@@ -147,16 +147,16 @@ addtg-db-error: '{prefix} &cНе удалось создать код &7— по
 addtg-msg:
   - ''
   - '{prefix} &#F8BEFBПривязка Telegram'
-  - '&#F8BEFB&l┃ &fКод: &#F8BEFB{code}'
-  - '&#F8BEFB&l┃ &fДействие: &7отправь боту &f/link {code}'
-  - '&#F8BEFB&l┃ &fСрок: &#F8BEFB{ttl}&7 сек'
+  - '&#F8BEFB┃ &fКод: &#F8BEFB{code}'
+  - '&#F8BEFB┃ &fДействие: &7отправь боту &f/link {code}'
+  - '&#F8BEFB┃ &fСрок: &#F8BEFB{ttl}&7 сек'
   - '&7● &fСначала напиши боту любое сообщение'
   - ''
 
 tg-linked:
   - ''
   - '{prefix} &aTelegram привязан'
-  - '&#F8BEFB&l┃ &fИгрок: &#F8BEFB{player}'
-  - '&#F8BEFB&l┃ &fСтатус: &aаккаунт защищён'
+  - '&#F8BEFB┃ &fИгрок: &#F8BEFB{player}'
+  - '&#F8BEFB┃ &fСтатус: &aаккаунт защищён'
   - '&7● &fВход: &#F8BEFB/login &7+ кнопка &a«Войти»&7 в Telegram'
   - ''

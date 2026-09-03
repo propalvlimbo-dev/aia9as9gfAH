@@ -6,6 +6,7 @@ import net.md_5.bungee.api.Title;
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
+import net.md_5.bungee.protocol.DefinedPacket;
 
 import java.util.UUID;
 
@@ -13,15 +14,17 @@ import java.util.UUID;
  * Экранные подсказки: title по центру экрана, actionbar над хотбаром,
  * пурпурный bossbar с таймером.
  *
- * Title/actionbar — официальный Bungee API. BossBar отправляется клиенту
- * отдельным пакетом через {@code Connection.unsafe().sendPacket(...)}:
- * в API-стабах этих классов нет, поэтому всё делается рефлексией, и если
- * прокси не поддерживает пакет — плагин просто работает без боссбара.
+ * Title/actionbar — официальный Bungee API. BossBar — отдельный пакет,
+ * который отправляется через {@code Connection.unsafe().sendPacket(...)}:
+ * класс пакета есть только в рантайме прокси, поэтому строится рефлексией,
+ * а вот сам метод отправки вызывается напрямую через публичный интерфейс
+ * (без рефлексии — иначе на некоторых форках ловится IllegalAccessException).
  */
 public final class Visual {
 
     /** Цвет пурпурный в пакете BossBar. */
     private static final int COLOR_PURPLE = 5;
+    private static boolean barWarned = false;
 
     private Visual() {
     }
@@ -39,7 +42,6 @@ public final class Visual {
                     .fadeOut(20);
             t.send(p);
         } catch (Throwable ignored) {
-            // если Title вдруг не поддержан — не роняем ничего
         }
     }
 
@@ -67,30 +69,23 @@ public final class Visual {
 
     /**
      * Пурпурный bossbar. Хендл позволяет обновлять текст/прогресс и убирать бар.
-     * Если прокси не умеет слать пакет — возвращается null (работаем без бара).
+     * Если прокси не умеет принимать пакет — возвращается null (работаем без бара,
+     * время дублируется в actionbar).
      */
-    private static boolean barWarned = false;
-
     public static BossBar startBossBar(ProxiedPlayer p, String initialText) {
         try {
             Class<?> cls = Class.forName("net.md_5.bungee.protocol.packet.BossBar");
-            Class<?> defined = Class.forName("net.md_5.bungee.protocol.DefinedPacket");
             UUID id = UUID.randomUUID();
 
             Object bar = cls.getConstructor(UUID.class, int.class).newInstance(id, 0); // add
-            BaseComponent first = firstComp(initialText);
-            cls.getMethod("setTitle", BaseComponent.class).invoke(bar, first);
+            cls.getMethod("setTitle", BaseComponent.class).invoke(bar, firstComp(initialText));
             cls.getMethod("setHealth", float.class).invoke(bar, 1f);
             cls.getMethod("setColor", int.class).invoke(bar, COLOR_PURPLE);
             cls.getMethod("setDivision", int.class).invoke(bar, 0);
             cls.getMethod("setFlags", byte.class).invoke(bar, (byte) 0);
 
-            Object unsafe = findUnsafe(p);
-            unsafe.getClass().getMethod("sendPacket", defined).invoke(unsafe, bar);
-            if (!barWarned) {
-                barWarned = true;
-            }
-            return new BossBar(cls, unsafe, id);
+            send(p, bar);
+            return new BossBar(p, cls, id);
         } catch (Throwable t) {
             if (!barWarned) {
                 barWarned = true;
@@ -102,16 +97,21 @@ public final class Visual {
         }
     }
 
+    /** Отправка пакета напрямую через публичный интерфейс Connection.unsafe(). */
+    private static void send(ProxiedPlayer p, Object barPacket) {
+        p.unsafe().sendPacket((DefinedPacket) barPacket);
+    }
+
     /** Обновление живого боссбара. health 0..1, text может быть null (не менять текст). */
     public static final class BossBar {
+        private final ProxiedPlayer player;
         private final Class<?> cls;
-        private final Object unsafe;
         private final UUID id;
         private boolean alive = true;
 
-        private BossBar(Class<?> cls, Object unsafe, UUID id) {
+        private BossBar(ProxiedPlayer player, Class<?> cls, UUID id) {
+            this.player = player;
             this.cls = cls;
-            this.unsafe = unsafe;
             this.id = id;
         }
 
@@ -128,11 +128,11 @@ public final class Visual {
                 }
                 Object bar = cls.getConstructor(UUID.class, int.class).newInstance(id, 2); // health
                 cls.getMethod("setHealth", float.class).invoke(bar, health);
-                send(bar);
+                send(player, bar);
                 if (text != null) {
                     Object bar2 = cls.getConstructor(UUID.class, int.class).newInstance(id, 3); // title
                     cls.getMethod("setTitle", BaseComponent.class).invoke(bar2, firstComp(text));
-                    send(bar2);
+                    send(player, bar2);
                 }
             } catch (Throwable ignored) {
             }
@@ -146,25 +146,13 @@ public final class Visual {
             alive = false;
             try {
                 Object bar = cls.getConstructor(UUID.class, int.class).newInstance(id, 1); // remove
-                send(bar);
+                send(player, bar);
             } catch (Throwable ignored) {
             }
-        }
-
-        private void send(Object bar) throws Exception {
-            Class<?> defined = Class.forName("net.md_5.bungee.protocol.DefinedPacket");
-            unsafe.getClass().getMethod("sendPacket", defined).invoke(unsafe, bar);
         }
     }
 
     // ---------------------------------------------------------------- helpers
-
-    private static Object findUnsafe(Object player) throws Exception {
-        // у ProxiedPlayer (реализация в прокси) есть метод unsafe(), объявленный
-        // в интерфейсе net.md_5.bungee.api.connection.Connection
-        java.lang.reflect.Method m = player.getClass().getMethod("unsafe");
-        return m.invoke(player);
-    }
 
     private static BaseComponent firstComp(String text) {
         BaseComponent[] arr = Messages.comp(text);

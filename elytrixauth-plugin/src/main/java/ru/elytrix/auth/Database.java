@@ -451,6 +451,53 @@ public final class Database {
         });
     }
 
+    /** Живой (не истёкший) код привязки игрока: есть — новый не создаём. */
+    public LinkInfo findOpenLink(UUID uuid, long now) throws SQLException {
+        return withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT id, code, expires_ts FROM pending_links "
+                            + "WHERE player_uuid = ? AND status = 'open' AND expires_ts > ? "
+                            + "FETCH FIRST 1 ROWS ONLY")) {
+                ps.setString(1, uuid.toString());
+                ps.setLong(2, now);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return new LinkInfo(rs.getLong("id"), rs.getString("code"),
+                                rs.getLong("expires_ts"));
+                    }
+                    return null;
+                }
+            }
+        });
+    }
+
+    /** Незакрытые просроченные коды помечаем использованными (гигиена БД). */
+    public void expireStaleLinks(UUID uuid, long now) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE pending_links SET status = 'expired' "
+                            + "WHERE player_uuid = ? AND status = 'open' AND expires_ts <= ?")) {
+                ps.setString(1, uuid.toString());
+                ps.setLong(2, now);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Строка живого кода привязки. */
+    public static final class LinkInfo {
+        public final long id;
+        public final String code;
+        public final long expires;
+
+        LinkInfo(long id, String code, long expires) {
+            this.id = id;
+            this.code = code;
+            this.expires = expires;
+        }
+    }
+
     // ---------------- login_requests (2FA) ----------------
 
     public long createLoginRequest(UUID uuid, String nickname, String ip, long ttlSec, long now) throws SQLException {

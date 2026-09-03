@@ -6,7 +6,7 @@ import net.md_5.bungee.api.plugin.Command;
 
 import java.sql.SQLException;
 
-/** /addtg — начать привязку Telegram: игрок получает код и шлёт его боту /link <код>. */
+/** /addtg — привязка Telegram: игрок получает код и шлёт его боту /link <код>. */
 public final class CmdAddTg extends Command {
 
     private final ElytrixAuthPlugin plugin;
@@ -32,9 +32,22 @@ public final class CmdAddTg extends Command {
             return;
         }
 
+        long now = ElytrixAuthPlugin.now();
         try {
+            // сначала закрываем просроченные коды игрока (гигиена)
+            plugin.db().expireStaleLinks(s.uuid, now);
+            // если код ещё жив — показываем тот же, новый не плодим
+            Database.LinkInfo live = plugin.db().findOpenLink(s.uuid, now);
+            if (live != null) {
+                s.linkId = live.id;
+                s.linkCode = live.code;
+                plugin.messages().chatList(p, "addtg-msg",
+                        "code", live.code, "ttl", String.valueOf(live.expires - now));
+                return;
+            }
+            // живого кода нет — создаём новый
             long linkId = plugin.db().createPendingLink(
-                    s.uuid, plugin.cfg().linkTtl(), ElytrixAuthPlugin.now());
+                    s.uuid, plugin.cfg().linkTtl(), now);
             String code = plugin.db().linkCode(linkId);
             if (code == null) {
                 plugin.messages().chat(p, "addtg-db-error");

@@ -333,8 +333,8 @@ public final class ElytrixAuthPlugin extends Plugin {
                 messages().chat(p, s.needReg ? "remind-reg" : "remind-login",
                         "sec", String.valueOf(left));
             }
-            // подсказка над хотбаром (раз в 2 сек) — видна при выключенном чате
-            if (ms - s.lastTipAt >= 2000) {
+            // подсказка над хотбаром (раз в 1 сек) — видна при выключенном чате
+            if (ms - s.lastTipAt >= 1000) {
                 s.lastTipAt = ms;
                 String tip = messages().raw(s.needReg ? "actionbar-reg" : "actionbar-login");
                 if (s.bar == null) {
@@ -352,7 +352,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             return;
         }
         long ms = System.currentTimeMillis();
-        if (ms - s.lastTipAt >= 2000) {
+        if (ms - s.lastTipAt >= 1000) {
             s.lastTipAt = ms;
             String tip = messages().raw("actionbar-tg");
             if (s.bar == null && s.deadline > 0) {
