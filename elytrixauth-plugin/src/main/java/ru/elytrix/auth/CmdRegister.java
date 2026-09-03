@@ -98,7 +98,7 @@ public final class CmdRegister extends Command {
 
         plugin.markAuthed(s);
         plugin.messages().chatList(p, "register-ok", "player", s.nickname);
-        plugin.connectTarget(p);
+        plugin.playCheckAnimation(p, "check-done-reg");
     }
 
     /** Пароль из одинаковых символов («aaaaaa», «111111») — слишком простой. */

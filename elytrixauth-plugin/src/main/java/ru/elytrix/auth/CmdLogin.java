@@ -90,7 +90,7 @@ public final class CmdLogin extends Command {
             }
             plugin.markAuthed(s);
             plugin.messages().chat(p, "login-ok", "player", s.nickname);
-            plugin.connectTarget(p);
+            plugin.playCheckAnimation(p, "check-done-login");
         } else {
             // 2FA: пароль верный — ждём кнопку в Telegram
             try {

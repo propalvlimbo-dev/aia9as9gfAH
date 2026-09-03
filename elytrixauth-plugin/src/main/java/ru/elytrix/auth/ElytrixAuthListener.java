@@ -28,8 +28,10 @@ public final class ElytrixAuthListener implements Listener {
 
     private static final Set<String> PRE_AUTH_COMMANDS = new HashSet<>(Arrays.asList(
             "reg", "register", "l", "login"));
-    private static final List<String> PRE_AUTH_TAB = Arrays.asList(
-            "/login ", "/l ", "/register ", "/reg ");
+    /** Таб у неавторизованного: команды авторизации + заглушка «ПАРОЛЬ» после пробела. */
+    private static final List<String> TAB_COMMANDS = Arrays.asList(
+            "/login", "/l", "/register", "/reg");
+    private static final String TAB_PASSWORD = "ПАРОЛЬ"; // визуальная заглушка вместо пароля
 
     private final ElytrixAuthPlugin plugin;
 
@@ -204,6 +206,8 @@ public final class ElytrixAuthListener implements Listener {
     /**
      * Таб: неавторизованному показываем только команды авторизации,
      * чтобы он не видел список серверных команд и ники игроков.
+     * После пробела таб подставляет слово-заглушку «ПАРОЛЬ» — куда вводить пароль:
+     *   /l<tab> → /l <tab> → /l ПАРОЛЬ   (аналогично /reg для обоих аргументов).
      */
     @EventHandler
     public void onTabComplete(TabCompleteEvent e) {
@@ -219,11 +223,36 @@ public final class ElytrixAuthListener implements Listener {
         String cursor = e.getCursor() == null ? "" : e.getCursor();
         e.setCancelled(true);
         List<String> out = new ArrayList<>();
-        if (cursor.startsWith("/")) {
-            String lower = cursor.toLowerCase(Locale.ROOT);
-            for (String suggestion : PRE_AUTH_TAB) {
-                if (suggestion.toLowerCase(Locale.ROOT).startsWith(lower)) {
-                    out.add(suggestion);
+        int sp = cursor.indexOf(' ');
+        if (sp < 0) {
+            // пробела ещё нет — дописываем саму команду авторизации
+            if (cursor.startsWith("/")) {
+                String typed = cursor.toLowerCase(Locale.ROOT);
+                for (String cmd : TAB_COMMANDS) {
+                    if (cmd.startsWith(typed)) {
+                        out.add(cmd + " ");
+                    }
+                }
+                // набрана ровно одна команда — соседний алиас не предлагаем
+                if (out.size() > 1) {
+                    for (String cmd : TAB_COMMANDS) {
+                        if (cmd.equals(typed)) {
+                            out.clear();
+                            out.add(cmd + " ");
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            // команда уже набрана — подсказываем слово «ПАРОЛЬ» вместо пароля
+            String cmd = cursor.substring(0, sp).toLowerCase(Locale.ROOT);
+            boolean authCmd = cmd.equals("/login") || cmd.equals("/l")
+                    || cmd.equals("/register") || cmd.equals("/reg");
+            if (authCmd) {
+                String token = cursor.substring(cursor.lastIndexOf(' ') + 1).toLowerCase(Locale.ROOT);
+                if ("пароль".startsWith(token)) {
+                    out.add(TAB_PASSWORD);
                 }
             }
         }

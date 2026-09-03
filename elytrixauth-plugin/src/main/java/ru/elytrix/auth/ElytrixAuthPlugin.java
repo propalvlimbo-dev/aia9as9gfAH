@@ -399,6 +399,52 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
+    /** Шаг кадров анимации «проверки пароля», мс. */
+    private static final long CHECK_STEP_MS = 300;
+
+    /**
+     * Красивая анимация «Проверка пароля» в title после успешного /reg или /login
+     * (чисто визуальный ход — по факту пароль уже проверен). Точки-прогресс по
+     * одной загораются зелёным, затем короткий title успеха, и только потом —
+     * перевод на target, чтобы игрок успел увидеть анимацию на auth-сервере.
+     *
+     * @param doneTitleKey ключ messages.yml с финальным title («Вход выполнен» и т.п.)
+     */
+    public void playCheckAnimation(ProxiedPlayer p, String doneTitleKey) {
+        if (p == null || !p.isConnected() || executor == null || executor.isShutdown()) {
+            return;
+        }
+        try {
+            String t = messages().raw("check-title");
+            String[] steps = new String[]{
+                    messages().raw("check-step-0"),
+                    messages().raw("check-step-1"),
+                    messages().raw("check-step-2"),
+                    messages().raw("check-step-3")
+            };
+            String doneSub = messages().raw("check-step-3");
+            for (int i = 0; i < steps.length; i++) {
+                final int idx = i;
+                executor.schedule(() -> {
+                    if (p.isConnected()) {
+                        Visual.title(p, t, steps[idx]);
+                    }
+                }, i * CHECK_STEP_MS, TimeUnit.MILLISECONDS);
+            }
+            long endMs = (long) steps.length * CHECK_STEP_MS;
+            // финальный «успех» и перевод на игровой сервер
+            executor.schedule(() -> {
+                if (p.isConnected()) {
+                    Visual.title(p, messages().raw(doneTitleKey), doneSub);
+                }
+            }, endMs, TimeUnit.MILLISECONDS);
+            executor.schedule(() -> connectTarget(p), endMs + 900, TimeUnit.MILLISECONDS);
+        } catch (Throwable ignored) {
+            // если пул уже закрыт (reload/выключение) — просто пускаем игрока сразу
+            connectTarget(p);
+        }
+    }
+
     public ServerInfo authServerInfo() {
         return getProxy().getServerInfo(cfg.authServer());
     }
@@ -508,7 +554,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             }
             markAuthed(s);
             messages().chatList(p, "tg-confirmed", "player", s.nickname);
-            connectTarget(p);
+            playCheckAnimation(p, "check-done-tg");
         } else if ("denied".equals(st)) {
             messages().kick(p, "kick-denied");
         } else if ("expired".equals(st)) {
