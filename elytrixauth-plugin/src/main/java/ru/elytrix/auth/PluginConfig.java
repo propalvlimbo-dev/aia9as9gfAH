@@ -141,7 +141,7 @@ public final class PluginConfig {
     /** Включены ли сессии. */
     public boolean sessionsEnabled()  { return getBool("sessions.enabled", true); }
     /** Сколько секунд живёт сессия (перезаход в течение срока — без пароля). */
-    public int    sessionMaxSeconds() { return getInt("session.max.seconds", 12 * 3600); }
+    public int    sessionMaxSeconds() { return getInt("session.max.seconds", 6 * 3600); }
     /** Строго: сессия привязана к IP — с другого IP вход только по паролю. */
     public boolean sessionCheckIp()   { return getBool("session.check.ip", true); }
 
