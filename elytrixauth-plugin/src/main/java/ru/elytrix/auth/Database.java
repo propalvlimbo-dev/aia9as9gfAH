@@ -74,14 +74,23 @@ public final class Database {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new SQLException("Не удалось создать папку БД: " + parent);
         }
-        // HSQLDB умеет писать служебные INFO (dataFileCache open, checkpoint и т.п.)
-        // и через java.util.logging, и через свой SimpleLog в System.out.
-        // NullCordX выводит всё это в консоль как ERROR, поэтому глушим JUL-логгер
-        // насовсем, а потоки System.out/err перехватываем на время инициализации БД
-        // (самый шумный момент — открытие файла БД и создание таблиц).
+        // HSQLDB логирует служебные INFO (dataFileCache open, checkpointClose и т.п.)
+        // через org.hsqldb.lib.FrameworkLogger: по умолчанию — напрямую в System.err,
+        // в прокси-средах (Bungee/NullCordX) — в JUL-логгеры вида hsqldb.db.*.ENGINE.
+        // Ни то, ни другое в консоли прокси не нужно. Безопасно глушим изнутри:
+        //  1) hsqldb.reconfig_logging=false — чтобы <clinit> FrameworkLogger НЕ вызывал
+        //     LogManager.reset()/readConfiguration() (это снесло бы JUL-настройки прокси);
+        //  2) статический флаг noopMode=true — FrameworkLogger.privlog() при noopMode
+        //     молча возвращается, т.е. HSQLDB вообще ничего не печатает.
+        // System.out/System.err и JUL-логгеры прокси при этом не трогаем.
         try {
-            java.util.logging.Logger.getLogger("org.hsqldb").setLevel(Level.OFF);
-        } catch (SecurityException ignored) {
+            System.setProperty("hsqldb.reconfig_logging", "false");
+            Class<?> frameworkLogger = Class.forName("org.hsqldb.lib.FrameworkLogger");
+            java.lang.reflect.Field noop = frameworkLogger.getDeclaredField("noopMode");
+            noop.setAccessible(true);
+            noop.setBoolean(null, true);
+        } catch (Throwable ignored) {
+            // если рефлексия не удалась — HSQLDB просто будет писать свои INFO, это не критично
         }
         this.url = "jdbc:hsqldb:file:" + dbFile.getAbsolutePath()
                 + ";hsqldb.lock_file=false;hsqldb.default_table_type=cached;sql.syntax_mys=true";
@@ -90,26 +99,9 @@ public final class Database {
         } catch (ClassNotFoundException e) {
             throw new SQLException("HSQLDB driver не вшит в jar плагина", e);
         }
-
-        java.io.PrintStream realOut = System.out;
-        java.io.PrintStream realErr = System.err;
-        java.io.ByteArrayOutputStream suppressed = new java.io.ByteArrayOutputStream();
-        try {
-            // HSQLDB (SimpleLog) пишет свои INFO в System.out, а не в JUL/SLF4J,
-            // поэтому на время инициализации БД глушим оба потока.
-            java.io.PrintStream silent = new java.io.PrintStream(suppressed, true,
-                    java.nio.charset.StandardCharsets.UTF_8);
-            System.setOut(silent);
-            System.setErr(silent);
-            try (Connection c = DriverManager.getConnection(url)) {
-                ensureSchema(c);
-            }
-        } finally {
-            System.setOut(realOut);
-            System.setErr(realErr);
-        }
-        if (suppressed.size() > 0) {
-            log.log(Level.FINE, "HSQLDB init log подавлен (" + suppressed.size() + " байт)");
+        // проверка соединения + автосоздание таблиц
+        try (Connection c = DriverManager.getConnection(url)) {
+            ensureSchema(c);
         }
     }
 

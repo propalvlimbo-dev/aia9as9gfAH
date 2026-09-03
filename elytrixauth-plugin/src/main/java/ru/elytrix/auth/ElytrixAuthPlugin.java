@@ -59,6 +59,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
 
         // Встраиваемая БД (HSQLDB): файл по db.file из config.properties, сервер БД не нужен
+        getLogger().info("ElytrixAuth: открываю встроенную БД " + cfg.dbFile() + " ...");
         try {
             db = new Database(dataFolder, cfg, getLogger());
             getLogger().info("Встроенная БД готова: " + cfg.dbFile() + " (таблицы созданы).");
