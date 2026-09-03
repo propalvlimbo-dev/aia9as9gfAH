@@ -1,18 +1,16 @@
-package net.md_5.bungee.api.event;
-
-import net.md_5.bungee.api.chat.BaseComponent;
+package net.md_5.bungee.api.chat;
 
 /**
- * Стаб HoverEvent (BungeeCord). Рантайм-класс подставляется прокси.
- * Конструктор HoverEvent(Action, BaseComponent[]) есть в Bungee/Waterfall-ветках.
+ * Стаб HoverEvent (BungeeCord). Рантайм-класс net.md_5.bungee.api.chat.HoverEvent
+ * подставляется прокси автоматически (parent-first). ВАЖНО: пакет — chat.
  */
 public class HoverEvent {
 
     public enum Action {
         SHOW_TEXT,
-        SHOW_ACHIEVEMENT,
         SHOW_ITEM,
-        SHOW_ENTITY
+        SHOW_ENTITY,
+        SHOW_ACHIEVEMENT
     }
 
     private final Action action;

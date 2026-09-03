@@ -56,6 +56,8 @@ public final class AuthSession {
     public volatile boolean tgHintShown = false;
     /** первичный вход на сервер в этой сессии — UI/приветствие ещё не показаны. */
     public volatile boolean joinUiShown = false;
+    /** «Добро пожаловать» в actionbar уже запланирован для игрового мира. */
+    public volatile boolean welcomeScheduled = false;
     /** когда в последний раз показывали title (чтобы он не исчезал с экрана). */
     public volatile long lastTitleAt = 0;
 

@@ -1,10 +1,10 @@
 package ru.elytrix.auth;
 
 import net.md_5.bungee.api.chat.BaseComponent;
+import net.md_5.bungee.api.chat.ClickEvent;
+import net.md_5.bungee.api.chat.HoverEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
-import net.md_5.bungee.api.event.ClickEvent;
-import net.md_5.bungee.api.event.HoverEvent;
 
 import java.io.File;
 import java.io.IOException;
@@ -234,8 +234,47 @@ public final class Messages {
         if (textWithAmp == null || textWithAmp.isEmpty()) {
             return new BaseComponent[]{root};
         }
-        appendMarkup(root, textWithAmp);
+        try {
+            appendMarkup(root, textWithAmp);
+        } catch (Throwable t) {
+            // Любой сбой markup/API форка не должен ронять соединение:
+            // рисуем обычный текст без кликабельных тегов.
+            TextComponent fb = new TextComponent("");
+            try {
+                renderPlain(fb, stripMarkup(textWithAmp));
+            } catch (Throwable t2) {
+                fb = new TextComponent(stripMarkup(textWithAmp));
+            }
+            return new BaseComponent[]{fb};
+        }
         return new BaseComponent[]{root};
+    }
+
+    /** Вырезает [action=...]...[/action] из строки (фолбэк при сбое markup). */
+    private static String stripMarkup(String text) {
+        StringBuilder sb = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c == '[') {
+                int close = text.indexOf(']', i + 1);
+                if (close > i) {
+                    String head = text.substring(i + 1, close);
+                    int eq = head.indexOf('=');
+                    if (eq > 0 && clickAction(head.substring(0, eq).trim().toLowerCase(java.util.Locale.ROOT)) != null) {
+                        i = close + 1; // пропускаем открывающий тег
+                        continue;
+                    }
+                }
+                if (close > i + 1 && text.charAt(i + 1) == '/') {
+                    i = close + 1; // пропускаем закрывающий тег
+                    continue;
+                }
+            }
+            sb.append(c);
+            i++;
+        }
+        return sb.toString();
     }
 
     /** Разбор текста: обычные куски + кликабельные теги [action=value]…[/action]. */
@@ -281,12 +320,20 @@ public final class Messages {
     }
 
     private static ClickEvent.Action clickAction(String name) {
-        switch (name) {
-            case "copy":    return ClickEvent.Action.COPY_TO_CLIPBOARD;
-            case "suggest": return ClickEvent.Action.SUGGEST_COMMAND;
-            case "run":     return ClickEvent.Action.RUN_COMMAND;
-            case "url":     return ClickEvent.Action.OPEN_URL;
-            default:        return null;
+        // Разрешаем через valueOf + try/catch: если в API конкретного прокси
+        // (старые форки Waterfall/FlameCord) нет какого-то действия (например,
+        // COPY_TO_CLIPBOARD), НЕ даём упасть с Error — просто без клика.
+        // Иначе Error в команде рвёт соединение (dispatchCommand ловит только Exception).
+        try {
+            switch (name) {
+                case "copy":    return ClickEvent.Action.valueOf("COPY_TO_CLIPBOARD");
+                case "suggest": return ClickEvent.Action.valueOf("SUGGEST_COMMAND");
+                case "run":     return ClickEvent.Action.valueOf("RUN_COMMAND");
+                case "url":     return ClickEvent.Action.valueOf("OPEN_URL");
+                default:        return null;
+            }
+        } catch (Throwable t) {
+            return null;
         }
     }
 
@@ -297,8 +344,23 @@ public final class Messages {
             renderPlain(root, inner);
             return;
         }
-        ClickEvent click = new ClickEvent(act, value);
-        HoverEvent hover = new HoverEvent(HoverEvent.Action.SHOW_TEXT, hoverText(actionName));
+        ClickEvent click = null;
+        HoverEvent hover = null;
+        try {
+            click = new ClickEvent(act, value);
+        } catch (Throwable ignored) {
+            // нет API клика на прокси — рисуем как обычный текст
+        }
+        try {
+            HoverEvent.Action ha = HoverEvent.Action.valueOf("SHOW_TEXT");
+            hover = new HoverEvent(ha, hoverText(actionName));
+        } catch (Throwable ignored) {
+            // нет API ховера — обойдёмся без него
+        }
+        if (click == null && hover == null) {
+            renderPlain(root, inner);
+            return;
+        }
         parse(root, inner, click, hover);
     }
 
@@ -417,11 +479,17 @@ public final class Messages {
         t.setUnderlined(underline);
         t.setStrikethrough(strike);
         t.setObfuscated(magic);
-        if (click != null) {
-            t.setClickEvent(click);
+        try {
+            if (click != null) {
+                t.setClickEvent(click);
+            }
+        } catch (Throwable ignored) {
         }
-        if (hover != null) {
-            t.setHoverEvent(hover);
+        try {
+            if (hover != null) {
+                t.setHoverEvent(hover);
+            }
+        } catch (Throwable ignored) {
         }
         root.addExtra(t);
         buf.setLength(0);

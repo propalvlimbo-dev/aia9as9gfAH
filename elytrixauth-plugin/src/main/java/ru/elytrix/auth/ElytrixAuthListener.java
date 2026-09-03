@@ -140,12 +140,14 @@ public final class ElytrixAuthListener implements Listener {
             return;
         }
         if (s.isAuthed()) {
-            // авто-вход по сессии (или заход на след. сервер после /login)
+            // авто-вход по сессии (или заход на след. сервер после /login).
+            // «Добро пожаловать» в actionbar покажет scheduleWelcome — через 2 сек
+            // ПОСЛЕ перевода в игровой мир (target), а не на auth.
             if (!s.joinUiShown) {
                 s.joinUiShown = true;
                 plugin.messages().chatList(p, "auto-login", "player", s.nickname);
-                plugin.messages().actionbar(p, "actionbar-authed", "player", s.nickname);
             }
+            plugin.scheduleWelcome(p, s);
             plugin.ensureNotAuth(p);
             return;
         }

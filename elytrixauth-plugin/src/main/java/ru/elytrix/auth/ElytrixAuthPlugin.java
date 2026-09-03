@@ -186,6 +186,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         s.lastTitleAt = 0;
         s.joinUiShown = false;
+        s.welcomeScheduled = false;
         // первое периодическое напоминание — только через ~10 сек после входа,
         // чтобы не дублировать приветствие при заходе на сервер
         s.remindAt = System.currentTimeMillis();
@@ -206,6 +207,48 @@ public final class ElytrixAuthPlugin extends Plugin {
             executor.execute(r);
         } else {
             r.run();
+        }
+    }
+
+    /** Выполнить задачу через задержку (мс) на потоке плагина. */
+    public void runLater(long delayMs, Runnable r) {
+        try {
+            if (executor != null && !executor.isShutdown()) {
+                executor.schedule(r, delayMs, TimeUnit.MILLISECONDS);
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+        r.run();
+    }
+
+    /**
+     * «Добро пожаловать» в actionbar — через 2 сек после того, как игрок
+     * оказался в игровом мире (target.server), а не на auth при /login.
+     */
+    public void scheduleWelcome(ProxiedPlayer p, AuthSession s) {
+        try {
+            if (s.welcomeScheduled || p == null || !p.isConnected()) {
+                return;
+            }
+            ServerInfo cur = p.getServer() == null ? null : p.getServer().getInfo();
+            if (cur == null || !cur.getName().equalsIgnoreCase(cfg.targetServer())) {
+                return; // игрок ещё не в игровом мире
+            }
+            s.welcomeScheduled = true;
+            String nick = s.nickname;
+            runLater(2000, () -> {
+                try {
+                    if (p.isConnected() && sessions.get(p.getUniqueId()) == s && s.isAuthed()) {
+                        ServerInfo cur2 = p.getServer() == null ? null : p.getServer().getInfo();
+                        if (cur2 != null && cur2.getName().equalsIgnoreCase(cfg.targetServer())) {
+                            messages().actionbar(p, "actionbar-authed", "player", nick);
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
         }
     }
 
@@ -367,13 +410,12 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         s.barText = null;
         ProxiedPlayer p = getProxy().getPlayer(s.uuid);
-        // Визуал шлём только когда игрок уже на сервере: для клиентов 1.20.2+
-        // LoginSuccess приходит лишь после подключения к серверу, и пакеты раньше
-        // этого момента ломают вход. При авто-входе (PostLogin) welcome покажет
-        // onServerConnected при заходе на сервер.
+        // «Добро пожаловать» НЕ шлём здесь — оно показывается в actionbar через
+        // 2 секунды после перевода в игровой мир (scheduleWelcome). Убираем только
+        // старый title (клиент уже в PLAY — для 1.20.2+ это безопасно, т.к. сюда
+        // попадаем только когда игрок уже на сервере).
         if (p != null && p.getServer() != null) {
             Visual.clearTitle(p);
-            messages().actionbar(p, "actionbar-authed", "player", s.nickname);
         }
     }
 

@@ -1,6 +1,8 @@
 package net.md_5.bungee.api.chat;
 
 import net.md_5.bungee.api.ChatColor;
+import net.md_5.bungee.api.chat.ClickEvent;
+import net.md_5.bungee.api.chat.HoverEvent;
 
 /**
  * Стаб: базовый компонент чата BungeeCord (рантайм-класс подставляется прокси).
@@ -32,10 +34,10 @@ public abstract class BaseComponent {
     public void setObfuscated(Boolean obfuscated) {
     }
 
-    public void setClickEvent(net.md_5.bungee.api.event.ClickEvent clickEvent) {
+    public void setClickEvent(ClickEvent clickEvent) {
     }
 
-    public void setHoverEvent(net.md_5.bungee.api.event.HoverEvent hoverEvent) {
+    public void setHoverEvent(HoverEvent hoverEvent) {
     }
 
     public void addExtra(String text) {
