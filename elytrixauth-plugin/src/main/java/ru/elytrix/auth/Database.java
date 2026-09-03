@@ -533,11 +533,11 @@ public final class Database {
 
     // ---------------- pending_links (привязка TG) ----------------
 
-    /** Создаёт одноразовый код привязки; возвращает id созданной строки. */
+    /** Создаёт одноразовый код привязки (6 цифр); возвращает id созданной строки. */
     public long createPendingLink(UUID uuid, long ttlSec, long now) throws SQLException {
         SecureRandom rnd = new SecureRandom();
         for (int attempt = 0; attempt < 8; attempt++) {
-            String code = String.format("%08d", rnd.nextInt(100_000_000));
+            String code = String.format("%06d", rnd.nextInt(1_000_000));
             final String c = code;
             Long id = withConn(conn -> {
                 boolean dup;
@@ -633,6 +633,18 @@ public final class Database {
                             + "WHERE player_uuid = ? AND status = 'open' AND expires_ts <= ?")) {
                 ps.setString(1, uuid.toString());
                 ps.setLong(2, now);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Отменить конкретный код привязки (/addtg cancel). */
+    public void expireLink(long id) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE pending_links SET status = 'expired' WHERE id = ? AND status = 'open'")) {
+                ps.setLong(1, id);
                 ps.executeUpdate();
             }
             return null;

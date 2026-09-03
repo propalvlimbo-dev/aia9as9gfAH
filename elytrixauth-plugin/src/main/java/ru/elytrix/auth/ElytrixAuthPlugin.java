@@ -223,28 +223,30 @@ public final class ElytrixAuthPlugin extends Plugin {
     }
 
     /**
-     * «Добро пожаловать» в actionbar — через 2 сек после того, как игрок
-     * оказался в игровом мире (target.server), а не на auth при /login.
+     * «Добро пожаловать» в actionbar — примерно через 1 сек после того, как игрок
+     * оказался в игровом мире (target.server). Запускается из onServerConnected
+     * (событие о подключении к серверу), а показ проверяет, что игрок уже на target.
      */
     public void scheduleWelcome(ProxiedPlayer p, AuthSession s) {
         try {
-            if (s.welcomeScheduled || p == null || !p.isConnected()) {
+            if (s == null || p == null || !p.isConnected() || s.welcomeScheduled) {
                 return;
-            }
-            ServerInfo cur = p.getServer() == null ? null : p.getServer().getInfo();
-            if (cur == null || !cur.getName().equalsIgnoreCase(cfg.targetServer())) {
-                return; // игрок ещё не в игровом мире
             }
             s.welcomeScheduled = true;
             String nick = s.nickname;
-            runLater(2000, () -> {
+            runLater(1000, () -> {
                 try {
-                    if (p.isConnected() && sessions.get(p.getUniqueId()) == s && s.isAuthed()) {
-                        ServerInfo cur2 = p.getServer() == null ? null : p.getServer().getInfo();
-                        if (cur2 != null && cur2.getName().equalsIgnoreCase(cfg.targetServer())) {
-                            messages().actionbar(p, "actionbar-authed", "player", nick);
-                        }
+                    if (!p.isConnected()) {
+                        return;
                     }
+                    if (sessions.get(p.getUniqueId()) != s || !s.isAuthed()) {
+                        return;
+                    }
+                    ServerInfo cur = p.getServer() == null ? null : p.getServer().getInfo();
+                    if (cur == null || !cur.getName().equalsIgnoreCase(cfg.targetServer())) {
+                        return; // ещё не в игровом мире — welcome не показываем
+                    }
+                    messages().actionbar(p, "actionbar-authed", "player", nick);
                 } catch (Throwable ignored) {
                 }
             });
@@ -559,6 +561,19 @@ public final class ElytrixAuthPlugin extends Plugin {
                     messages().kick(p, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
                 }
                 continue;
+            }
+            // Дополнительная защита: неавторизованный игрок не должен находиться
+            // ни на каком сервере, кроме auth. В обычном потоке это исключено
+            // (ServerConnectEvent всегда ведёт на auth), но если что-то пошло не так
+            // (гонка, сторонний плагин-редирект) — сразу кикаем с понятной причиной.
+            if (!s.isAuthed()) {
+                ServerInfo curInfo = p.getServer().getInfo();
+                ServerInfo authInfo = authServerInfo();
+                if (authInfo != null && curInfo != null
+                        && !curInfo.getName().equalsIgnoreCase(authInfo.getName())) {
+                    messages().kick(p, "kick-need-auth");
+                    continue;
+                }
             }
             switch (s.state) {
                 case WAIT:

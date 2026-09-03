@@ -74,6 +74,7 @@ kick-too-many-tries: '&#F8BEFBВход заблокирован\n\n&cСлишк�
 kick-denied: '&#F8BEFBВход отклонён\n\n&cОтклонено в Telegram\n\n&7Если это был ты — зайди и попробуй ещё раз'
 kick-ip-banned: '&#F8BEFBДоступ временно ограничен\n\n&cСлишком много неверных входов с твоего IP\n\n&7Бан спадает через &f{time}&7 мин — зайди позже'
 kick-online-ip-limit: '&#F8BEFBЛимит подключений\n\n&cС одного IP одновременно может играть только &f{max}&c аккаунта\n\n&7Дождись, когда кто-то выйдет, и зайди снова'
+kick-need-auth: '&#F8BEFBВход запрещён\n\n&cПройди авторизацию\n\n&7Вход на сервер — только через &felytrix.pw'
 
 # ---------- блокировки чата и команд ----------
 
@@ -163,14 +164,17 @@ hint-tg:
 addtg-not-authed: '{prefix} &cСначала войди: &#F8BEFB/login &7<пароль>'
 addtg-db-error: '{prefix} &cНе удалось создать код &7— попробуй ещё раз'
 # Кликабельно: [copy=/link {code}] — клик копирует команду, [url=https://t.me/{bot}] — открывает бота
+# Срок кода в чате НЕ пишем — он виден в actionbar над хотбаром (addtg-actionbar).
 addtg-msg:
   - ''
   - '{prefix} &#F8BEFBПривязка Telegram'
-  - '&#F8BEFB┃ &fКод: [copy=/link {code}]&#F8BEFB/link {code}[/copy]'
-  - '&#F8BEFB┃ &fБот: [url=https://t.me/{bot}]&#F8BEFB@{bot}[/url]'
-  - '&#F8BEFB┃ &fСрок: &#F8BEFB{ttl}&7 сек &8| &fкод виден над хотбаром'
+  - '&#F8BEFB┃ &71. &fНажми на код — он скопируется:'
+  - '&#F8BEFB┃ [copy=/link {code}]&#F8BEFB/link {code}[/copy]'
+  - '&#F8BEFB┃ &72. &fОтправь его боту: [url=https://t.me/{bot}]&#F8BEFB@{bot}[/url]'
   - '&7● &fСначала напиши боту любое сообщение'
   - ''
+addtg-cancel-ok: '{prefix} &aКод привязки отменён'
+addtg-cancel-none: '{prefix} &7У тебя нет активного кода привязки'
 
 # Процесс привязки над хотбаром: код + отсчёт до удаления (пока код жив)
 addtg-actionbar: '{prefix} &#F8BEFBПривязка &7• &fКод: &#F8BEFB{code} &7• &fисчезнет через &#F8BEFB{sec}&7 сек'

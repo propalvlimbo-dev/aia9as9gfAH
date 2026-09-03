@@ -56,7 +56,7 @@ async def cmd_help(m: Message) -> None:
 async def cmd_link(m: Message) -> None:
     args = m.text.split()
     if len(args) != 2 or not args[1].isdigit():
-        await m.answer("Отправь код из игры так: <code>/link 12345678</code>")
+        await m.answer("Отправь код из игры так: <code>/link 123456</code>")
         return
     if m.from_user is None:
         return

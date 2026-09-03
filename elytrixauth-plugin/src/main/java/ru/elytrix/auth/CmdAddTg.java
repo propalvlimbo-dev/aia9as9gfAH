@@ -32,6 +32,12 @@ public final class CmdAddTg extends Command {
             return;
         }
 
+        // /addtg cancel — отменить текущий код и убрать процесс из actionbar
+        if (args.length >= 1 && "cancel".equalsIgnoreCase(args[0])) {
+            cancelCode(p, s);
+            return;
+        }
+
         long now = ElytrixAuthPlugin.now();
         try {
             // сначала закрываем просроченные коды игрока (гигиена)
@@ -71,5 +77,30 @@ public final class CmdAddTg extends Command {
             plugin.messages().chat(p, "db-error");
             plugin.getLogger().severe("createPendingLink error: " + e.getMessage());
         }
+    }
+
+    /** /addtg cancel: код в БД помечаем истёкшим, actionbar очищаем. */
+    private void cancelCode(ProxiedPlayer p, AuthSession s) {
+        boolean had = s.linkId >= 0 || s.linkCode != null || s.linkDoneAt > 0;
+        try {
+            if (s.linkId >= 0) {
+                plugin.db().expireLink(s.linkId);
+            }
+        } catch (SQLException e) {
+            plugin.messages().chat(p, "db-error");
+            plugin.getLogger().severe("expireLink(cancel) error: " + e.getMessage());
+            return;
+        }
+        s.linkId = -1;
+        s.linkCode = null;
+        s.linkExpires = 0;
+        s.linkDoneAt = 0;
+        s.okTipAt = 0;
+        // очищаем actionbar от процесса привязки
+        try {
+            Visual.actionbar(p, "");
+        } catch (Throwable ignored) {
+        }
+        plugin.messages().chat(p, had ? "addtg-cancel-ok" : "addtg-cancel-none");
     }
 }
