@@ -188,6 +188,7 @@ tg-linked:
 # ---------- выход из аккаунта (/logout) ----------
 
 logout-not-authed: '{prefix} &cТы не авторизован'
+logout-progress: '{prefix} &7Выключаю сессию&8…'
 kick-logged-out: '&cТы вышел с аккаунта\n\n&7Войди заново:\n&#F8BEFB/login <пароль>'
 
 # ---------- админ-команды (/elytrixauth) ----------

@@ -205,6 +205,25 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
+    /**
+     * Кикнуть игрока через задержку (мс). Нужно для /logout: мгновенный кик +
+     * мгновенный реконнект могут попасть в «уже подключен» на прокси (старая
+     * сессия ещё не закрыта), а login-кик на некоторых прокси ломает клиент 1.21.4.
+     */
+    public void kickLater(ProxiedPlayer p, long delayMs, String key, String... args) {
+        if (p == null || executor == null || executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.schedule(() -> {
+                if (p.isConnected()) {
+                    messages().kick(p, key, args);
+                }
+            }, delayMs, TimeUnit.MILLISECONDS);
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** Полная перезагрузка: config.properties, messages.yml, БД, HTTP API. */
     public void reloadPlugin() {
         File dataFolder = getDataFolder();

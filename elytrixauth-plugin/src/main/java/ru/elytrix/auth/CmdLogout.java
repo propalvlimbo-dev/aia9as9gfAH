@@ -48,6 +48,12 @@ public final class CmdLogout extends Command {
         plugin.clearFails("nick:" + s.nickname.toLowerCase());
         plugin.clearFails("ip:" + s.ip);
         plugin.leave(p.getUniqueId());
-        plugin.messages().kick(p, "kick-logged-out");
+        // Кикаем НЕ мгновенно, а через ~1.5 сек: если игрок сразу жмёт «заново»,
+        // прокси может ещё не дочистить старую сессию, и новый вход ловит
+        // login-кик «already connected» (на некоторых прокси он криво сериализуется
+        // для 1.21.4 — клиент падает с "login_disconnect ... extra bytes").
+        // Пауза даёт прокси закрыть старый канал до реконнекта.
+        plugin.messages().chat(p, "logout-progress");
+        plugin.kickLater(p, 1500, "kick-logged-out");
     }
 }
