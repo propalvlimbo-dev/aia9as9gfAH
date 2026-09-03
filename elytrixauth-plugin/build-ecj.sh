@@ -2,14 +2,13 @@
 # Сборка ElytrixAuth.jar через ECJ (Eclipse Compiler for Java) + JRE.
 # Используется в песочнице без JDK: ECJ работает на любой JRE >= 21.
 # HSQLDB (lib/hsqldb.jar) вшивается в jar.
-# Результат: dist/ElytrixAuth-<version>.jar
+# Результат: dist/ElytrixAuth.jar
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
 JAVA_BIN="${JAVA_BIN:-java}"
 ECJ_JAR="${ECJ_JAR:-/tmp/ecm/org/eclipse/jdt/ecj/3.46.0/ecj-3.46.0.jar}"
-VERSION="1.0.0"
 
 if [ ! -f "$ECJ_JAR" ]; then
     echo "!!! Нет ECJ: $ECJ_JAR (скачай ecj-3.46.0.jar или укажи ECJ_JAR=...)"
@@ -54,8 +53,8 @@ cp -r build/classes/* build/jar-merge/
 
 # 5) упаковка jar (zip через python: jar == zip)
 mkdir -p dist
-rm -f "dist/ElytrixAuth-$VERSION.jar"
-python3 - "dist/ElytrixAuth-$VERSION.jar" build/jar-merge <<'PYEOF'
+rm -f "dist/ElytrixAuth.jar"
+python3 - "dist/ElytrixAuth.jar" build/jar-merge <<'PYEOF'
 import sys, zipfile, pathlib
 out, src = sys.argv[1], pathlib.Path(sys.argv[2])
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -64,4 +63,4 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(p, p.relative_to(src).as_posix())
 PYEOF
 
-echo "OK: $ROOT/dist/ElytrixAuth-$VERSION.jar"
+echo "OK: $ROOT/dist/ElytrixAuth.jar"

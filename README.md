@@ -16,7 +16,7 @@
 
 | Часть | Путь | Что делает |
 |---|---|---|
-| Плагин | `elytrixauth-plugin/dist/ElytrixAuth-1.0.0.jar` | Java (Bungee API): команды `/reg /register /login /l /logout /addtg`, админ-команды `/elytrixauth` (`/ea`), удержание неавторизованных на auth, 2FA, защита от перебора |
+| Плагин | `elytrixauth-plugin/dist/ElytrixAuth.jar` | Java (Bungee API): команды `/reg /register /login /l /logout /addtg`, админ-команды `/elytrixauth` (`/ea`), удержание неавторизованных на auth, 2FA, защита от перебора |
 | Бот | `elytrix-bot/` | Python (aiogram 3): `/link <код>`, `/unlink`, кнопки «Войти / Отклонить» при 2FA |
 | БД | **встроена в плагин** (HSQLDB embedded) | файл БД в `plugins/ElytrixAuth/db/`, таблицы создаются сами при старте, ничего устанавливать не нужно |
 
@@ -32,7 +32,7 @@
 
 ## 2. Плагин (в plugins/ NullCordX)
 
-1. Положить `elytrixauth-plugin/dist/ElytrixAuth-1.0.0.jar` в папку `plugins/` прокси.
+1. Положить `elytrixauth-plugin/dist/ElytrixAuth.jar` в папку `plugins/` прокси.
 2. Перезапустить NullCordX → создастся папка `plugins/ElytrixAuth/` с
    `config.properties` и `messages.yml` (и в `db/` — файл встроенной БД).
 3. Проверить в `config.properties`: `auth.server` (имя auth-сервера из config.yml прокси)
@@ -164,7 +164,7 @@ cd elytrixauth-plugin
 # hsqldb.jar (встроенная БД) уже в lib/. Если его нет — скачай HSQLDB
 # (jar org.hsqldb:hsqldb) и положи в lib/hsqldb.jar.
 ./build.sh          # нужен JDK 17+; JAVAC=... ./build.sh, если javac не в PATH
-# результат: dist/ElytrixAuth-1.0.0.jar (HSQLDB вшита внутрь)
+# результат: dist/ElytrixAuth.jar (HSQLDB вшита внутрь)
 ```
 
 Стабы Bungee API в `elytrixauth-plugin/stubs/` нужны только для компиляции

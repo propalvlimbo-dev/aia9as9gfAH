@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Сборка ElytrixAuth.jar из исходников. Нужен JDK 17+ (javac).
 # Derby (встроенная БД) уже лежит в lib/ и вшивается в jar.
-# Результат: dist/ElytrixAuth-<version>.jar
+# Результат: dist/ElytrixAuth.jar
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
 JAVAC="${JAVAC:-javac}"
 JAR="${JAR:-jar}"
-VERSION="1.0.0"
 
 # 1) исходники плагина (compile-only стабы Bungee API в stubs/) -> классы
 rm -rf build/classes build/jar-merge
@@ -38,7 +37,7 @@ cp -r build/classes/* build/jar-merge/
 
 # 5) упаковка
 mkdir -p dist
-rm -f "dist/ElytrixAuth-$VERSION.jar"
-( cd build/jar-merge && "$JAR" --create --file "$ROOT/dist/ElytrixAuth-$VERSION.jar" . )
+rm -f "dist/ElytrixAuth.jar"
+( cd build/jar-merge && "$JAR" --create --file "$ROOT/dist/ElytrixAuth.jar" . )
 
-echo "OK: $ROOT/dist/ElytrixAuth-$VERSION.jar"
+echo "OK: $ROOT/dist/ElytrixAuth.jar"
