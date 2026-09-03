@@ -307,7 +307,10 @@ public final class ApiServer {
         }
         try {
             String nickname = db.linkByCode(code.trim(), tgId, ElytrixAuthPlugin.now());
-            if (nickname == null) {
+            if ("".equals(nickname)) {
+                // один Telegram — один аккаунт
+                respondJson(ex, 200, "{\"ok\":false,\"error\":\"tg_already_linked\"}");
+            } else if (nickname == null) {
                 respondJson(ex, 200, "{\"ok\":false,\"error\":\"invalid_or_expired_code\"}");
             } else {
                 respondJson(ex, 200, "{\"ok\":true,\"nickname\":" + jsonStr(nickname) + "}");
@@ -385,7 +388,8 @@ public final class ApiServer {
         }
         ProxiedPlayer p = plugin.proxy().getPlayer(row.uuid);
         if (p != null) {
-            plugin.messages().kick(p, "kick-by-bot");
+            // мягкий разрыв: игрок в игре, кик через короткую задержку
+            plugin.kickLater(p, 400, "kick-by-bot");
         }
         // сбрасываем сессию: после кика вход будет только по паролю
         // (+2FA или уведомление, смотря по настройке аккаунта)
@@ -493,6 +497,8 @@ public final class ApiServer {
                     sb.append(',');
                 }
                 sb.append("{\"tg_id\":").append(a.tgId)
+                        .append(",\"player_uuid\":")
+                        .append(a.playerUuid == null ? "null" : jsonStr(a.playerUuid))
                         .append(",\"text\":").append(jsonStr(a.text))
                         .append('}');
             }

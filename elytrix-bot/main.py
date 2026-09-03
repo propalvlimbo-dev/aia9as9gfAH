@@ -55,7 +55,19 @@ PW_ERR_TEXT = {
     "like_nick": "не должен совпадать с ником аккаунта",
     "same_chars": "слишком простой (все символы одинаковые)",
     "player_not_found": "аккаунт не найден на сервере",
+    "not_yours": "аккаунт больше не привязан к этому Telegram",
 }
+
+# Коды ошибок привязки (плагин) -> человеческий текст
+LINK_ERR_TEXT = {
+    "invalid_or_expired_code": "Код не найден или уже использован.\n"
+                               "Запусти /addtg в игре ещё раз — придёт новый код.",
+    "tg_already_linked": "У этого Telegram уже привязан аккаунт — к одному Telegram "
+                         "можно привязать только один аккаунт.",
+}
+
+# chat_id, где закреплено сообщение-панель {tg_id: message_id}
+_pin_msg: dict[int, int] = {}
 
 
 # ------------------------------------------------------------------ helpers
@@ -89,7 +101,10 @@ def panel_text(accounts: list, result: str | None = None) -> str:
             twofa = "2FA вкл" if a["tg2fa"] else "2FA выкл"
             lines.append(f"• <b>{esc(a['nickname'])}</b> — {where} · {twofa}")
         lines.append("")
-        lines.append("Кнопки действуют на свой аккаунт:")
+        if len(accounts) == 1:
+            lines.append("Кнопки:")
+        else:
+            lines.append("Кнопки действуют на свой аккаунт:")
     if result:
         lines.append("")
         lines.append(result)
@@ -113,22 +128,40 @@ def panel_kb(accounts: list) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def send_panel(chat_id: int, result: str | None = None) -> None:
+async def update_or_pin_panel(chat_id: int) -> None:
+    """Единая «панель»: пересоздаём/правим закреп.
+
+    Панель должна быть видна всегда — держим её в закрепе чата:
+      * если закреп уже наш — просто обновляем текст/кнопки,
+      * иначе шлём новое сообщение, закрепляем (если получится) и запоминаем.
+    Если закрепить не вышло (нет прав и т.п.) — остаётся обычным сообщением.
+    """
     accounts = await get_accounts_or_alert(chat_id)
     if accounts is None:
         return
-    await bot.send_message(chat_id, panel_text(accounts, result), reply_markup=panel_kb(accounts))
-
-
-async def refresh_panel(msg: Message, result: str) -> None:
-    """Перерисовывает панель прямо в том же сообщении (свежие статусы + итог действия)."""
-    accounts = await get_accounts_or_alert(msg.chat.id)
-    if accounts is None:
-        return  # исходное сообщение остаётся, пользователь увидит алерт
+    text = panel_text(accounts)
+    kb = panel_kb(accounts)
+    pin_id = _pin_msg.get(chat_id)
+    if pin_id is not None:
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=pin_id, reply_markup=kb)
+            return
+        except Exception as e:
+            if "not modified" in str(e).lower():
+                return  # текст/кнопки не изменились — панель на месте, дубли не нужны
+            log.warning("panel edit pinned: %s", e)
+            _pin_msg.pop(chat_id, None)
     try:
-        await msg.edit_text(panel_text(accounts, result), reply_markup=panel_kb(accounts))
+        sent = await bot.send_message(chat_id, text, reply_markup=kb)
     except Exception as e:
-        log.warning("refresh panel: %s", e)
+        log.warning("panel send: %s", e)
+        return
+    _pin_msg[chat_id] = sent.message_id
+    try:
+        await bot.pin_chat_message(chat_id, sent.message_id,
+                                   disable_notification=True)
+    except Exception as e:
+        log.info("pin недоступен (%s) — панель остаётся сообщением", e)
 
 
 async def owned_account(cq: CallbackQuery) -> dict | None:
@@ -155,15 +188,17 @@ def drop_pending_pw(tg_id: int) -> None:
 
 @dp.message(CommandStart())
 async def cmd_start(m: Message) -> None:
-    if m.from_user is not None:
-        drop_pending_pw(m.from_user.id)
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
     await m.answer(
         "👋 <b>Elytrix</b> — привязка Minecraft-аккаунта к Telegram.\n\n"
         "1) Зайди на сервер и напиши в игре <code>/addtg</code>\n"
         "2) Ты получишь код — отправь его мне: <code>/link &lt;код&gt;</code>\n\n"
-        "После привязки я пришлю панель управления: кик, 2FA и смена пароля "
-        "прямо в этом чате. Панель можно вызвать в любой момент командой <code>/menu</code>."
+        "После привязки я покажу панель управления (кик, 2FA, смена пароля) "
+        "и закреплю её, чтобы кнопки всегда были под рукой."
     )
+    await update_or_pin_panel(m.chat.id)
 
 
 @dp.message(Command("help"))
@@ -175,7 +210,7 @@ async def cmd_help(m: Message) -> None:
 async def cmd_menu(m: Message) -> None:
     if m.from_user is not None:
         drop_pending_pw(m.from_user.id)
-    await send_panel(m.chat.id)
+    await update_or_pin_panel(m.chat.id)
 
 
 @dp.message(Command("link"))
@@ -188,22 +223,23 @@ async def cmd_link(m: Message) -> None:
         await m.answer("Отправь код из игры так: <code>/link 123456</code>")
         return
     try:
-        nickname = await api.link(args[1], m.from_user.id)
+        nickname, err_code = await api.link(args[1], m.from_user.id)
     except ApiError as e:
         log.warning("link error: %s", e)
         await m.answer("⚠️ Не удалось связаться с сервером. Попробуй через минуту.")
         return
     if nickname is None:
-        await m.answer("❌ Код не найден или уже использован.\n"
-                       "Запусти <code>/addtg</code> в игре ещё раз — придёт новый код.")
+        reason = LINK_ERR_TEXT.get(err_code, "Код не найден или уже использован. "
+                                            "Запусти <code>/addtg</code> в игре ещё раз.")
+        await m.answer("❌ " + reason)
         return
     await m.answer(
         f"✅ Аккаунт <b>{esc(nickname)}</b> привязан к твоему Telegram!\n\n"
-        "2FA по умолчанию выключена: при входе аккаунта я просто пришлю уведомление. "
-        "Включить подтверждение входа можно в панели ниже.\n"
+        "2FA по умолчанию выключена: при входе аккаунта я пришлю уведомление. "
+        "Включить подтверждение входа можно в панели управления.\n"
         "Если это не твой аккаунт — напиши администратору."
     )
-    await send_panel(m.chat.id)
+    await update_or_pin_panel(m.chat.id)
 
 
 @dp.message(Command("unlink"))
@@ -211,12 +247,37 @@ async def cmd_unlink(m: Message) -> None:
     if m.from_user is not None:
         drop_pending_pw(m.from_user.id)
     await m.answer(
-        "🔓 Полная отвязка всех твоих аккаунтов от Telegram пока делается на сервере.\n"
+        "🔓 Полная отвязка аккаунта от Telegram пока делается на сервере.\n"
         "Напиши администратору ник — он снимет привязку вручную."
     )
 
 
 # ------------------------------------------------------------------ кнопки панели
+
+async def _panel_edit_after(cq: CallbackQuery, result: str) -> None:
+    """Обновляет панель после действия кнопки.
+
+    Правим сообщение, на котором нажали (обычно это и есть закреп-панель);
+    если оно не совпадает с закрепом — обновляем и закреп, чтобы «живая»
+    панель всегда была свежей.
+    """
+    accounts = await get_accounts_or_alert(cq.message.chat.id)
+    if accounts is None:
+        return
+    text = panel_text(accounts, result)
+    kb = panel_kb(accounts)
+    try:
+        await cq.message.edit_text(text, reply_markup=kb)
+    except Exception as e:
+        log.warning("panel edit: %s", e)
+    pin_id = _pin_msg.get(cq.message.chat.id)
+    if pin_id is not None and pin_id != cq.message.message_id:
+        try:
+            await bot.edit_message_text(text, chat_id=cq.message.chat.id,
+                                        message_id=pin_id, reply_markup=kb)
+        except Exception as e:
+            log.warning("panel edit pinned: %s", e)
+
 
 async def _panel_action_error(cq: CallbackQuery, data: dict, nick: str) -> bool:
     """Общий разбор ok:false от действий панели. True — ошибку показали, дальше не идём."""
@@ -224,8 +285,7 @@ async def _panel_action_error(cq: CallbackQuery, data: dict, nick: str) -> bool:
         return False
     err = data.get("error")
     if err in ("not_yours", "player_not_found"):
-        await refresh_panel(cq.message,
-                            f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
+        await _panel_edit_after(cq, f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
     else:
         log.warning("panel action error: %s", err)
         await cq.answer("⚠️ Не получилось. Попробуй ещё раз.", show_alert=True)
@@ -253,7 +313,7 @@ async def cb_kick(cq: CallbackQuery) -> None:
     else:
         result = (f"⛏ <b>{esc(nick)}</b> сейчас не в игре. "
                   f"Сессия сброшена — при следующем входе понадобится пароль.")
-    await refresh_panel(cq.message, result)
+    await _panel_edit_after(cq, result)
 
 
 @dp.callback_query(F.data.startswith("2fa:"))
@@ -277,66 +337,34 @@ async def cb_toggle2fa(cq: CallbackQuery) -> None:
     else:
         result = (f"🔓 2FA для <b>{esc(nick)}</b> выключена. "
                   f"При входе буду присылать только уведомление.")
-    await refresh_panel(cq.message, result)
+    await _panel_edit_after(cq, result)
 
 
-@dp.callback_query(F.data.startswith("pw:"))
-async def cb_change_password(cq: CallbackQuery) -> None:
+# Кик прямо из сообщения «Вход в аккаунт» (2FA выключена) — кнопка под уведомлением
+@dp.callback_query(F.data.startswith("ak:"))
+async def cb_kick_from_alert(cq: CallbackQuery) -> None:
     await cq.answer()
     acc = await owned_account(cq)
     if acc is None:
         return
-    if cq.from_user is None:
-        return
     nick = acc["nickname"]
-    _pending_pw[cq.from_user.id] = {"nickname": nick, "until": time.time() + PW_TTL_SEC}
-    await cq.message.answer(
-        f"🔑 Отправь <b>новый пароль</b> для аккаунта <b>{esc(nick)}</b> одним сообщением.\n\n"
-        "Пароль полностью заменит старый и понадобится при следующем входе в игру. "
-        f"Ввод можно отменить командой <code>/menu</code>."
-    )
-
-
-@dp.message(F.text & ~F.text.startswith("/"))
-async def on_password_text(m: Message) -> None:
-    """Ловим сообщение-пароль, когда ждём его после «Сменить пароль»."""
-    if m.from_user is None:
-        return
-    st = _pending_pw.get(m.from_user.id)
-    if st is None:
-        return
-    nick = st["nickname"]
-    if time.time() > st["until"]:
-        drop_pending_pw(m.from_user.id)
-        await m.answer("⏰ Время на ввод пароля вышло. Нажми «Сменить пароль» ещё раз.")
-        return
-    password = m.text.strip()
     try:
-        ok, err = await api.change_password(nick, m.from_user.id, password)
+        data = await api.kick(nick, cq.from_user.id)
     except ApiError as e:
-        log.warning("change password error: %s", e)
-        await m.answer("⚠️ Сервер недоступен. Нажми «Сменить пароль» ещё раз.")
-        drop_pending_pw(m.from_user.id)
+        log.warning("alert-kick error: %s", e)
+        await cq.answer("⚠️ Сервер недоступен. Попробуй ещё раз.", show_alert=True)
         return
-    if ok:
-        drop_pending_pw(m.from_user.id)
-        await m.answer(
-            f"✅ Пароль аккаунта <b>{esc(nick)}</b> изменён.\n\n"
-            "Старый пароль больше не действует, сессия сброшена — "
-            "при следующем входе в игру используй новый пароль."
-        )
-        return
-    if err in ("not_yours", "player_not_found"):
-        drop_pending_pw(m.from_user.id)
-        await m.answer(f"❌ Аккаунт <b>{esc(nick)}</b> больше не привязан к этому Telegram.\n"
-                       f"Панель можно обновить командой <code>/menu</code>.")
-        return
-    # ошибка правил пароля: код известен или нет — просим прислать другой
-    reason = PW_ERR_TEXT.get(err, err or "не подходит")
-    await m.answer(
-        f"❌ Пароль для <b>{esc(nick)}</b> не принят ({reason}).\n"
-        "Пришли другой пароль или отмени командой <code>/menu</code>."
-    )
+    if data.get("ok"):
+        extra = ("Игрок кикнут, сессия сброшена."
+                 if data.get("online")
+                 else "Игрок сейчас не в игре, но сессия сброшена — вход будет по паролю.")
+        try:
+            await cq.message.edit_text(
+                cq.message.html_text + f"\n\n✅ {extra}", reply_markup=None)
+        except Exception:
+            pass
+    else:
+        await cq.answer("❌ Не получилось кикнуть.", show_alert=True)
 
 
 # ------------------------------------------------------------------ входы: 2FA и уведомления
@@ -412,7 +440,15 @@ async def poller() -> None:
             alerts = await api.alerts()
             for al in alerts:
                 try:
-                    await bot.send_message(int(al["tg_id"]), str(al.get("text") or ""))
+                    text = str(al.get("text") or "")
+                    uuid = al.get("player_uuid")
+                    kb = None
+                    if uuid:
+                        # под уведомлением «Вход в аккаунт» — кнопка «Кикнуть»
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text="⛏ Кикнуть", callback_data=f"ak:{uuid}"),
+                        ]])
+                    await bot.send_message(int(al["tg_id"]), text, reply_markup=kb)
                 except Exception as e:
                     log.warning("send alert tg=%s: %s", al.get("tg_id"), e)
         except ApiError as e:

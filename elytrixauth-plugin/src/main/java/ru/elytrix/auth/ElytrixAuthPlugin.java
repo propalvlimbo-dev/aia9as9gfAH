@@ -482,8 +482,12 @@ public final class ElytrixAuthPlugin extends Plugin {
      * перевод на target, чтобы игрок успел увидеть анимацию на auth-сервере.
      *
      * @param doneTitleKey ключ messages.yml с финальным title («Вход выполнен» и т.п.)
+     * @param delayedConnect true — connect на target делаем с дополнительной паузой
+     *                       (для /reg: свежий коннект + быстрый server-switch — самое
+     *                       частое место «ошибки сетевого протокола»; даём клиенту
+     *                       секунду-полторы на устаканивание входящего потока)
      */
-    public void playCheckAnimation(ProxiedPlayer p, String doneTitleKey) {
+    public void playCheckAnimation(ProxiedPlayer p, String doneTitleKey, boolean delayedConnect) {
         if (p == null || !p.isConnected() || executor == null || executor.isShutdown()) {
             return;
         }
@@ -512,16 +516,22 @@ public final class ElytrixAuthPlugin extends Plugin {
                     Visual.title(p, messages().raw(doneTitleKey), doneSub, 1, 12, 5);
                 }
             }, endMs, TimeUnit.MILLISECONDS);
+            long connectDelay = endMs + 900 + (delayedConnect ? 1500 : 0);
             executor.schedule(() -> {
                 if (p.isConnected()) {
                     Visual.clearTitle(p);
                     connectTarget(p);
                 }
-            }, endMs + 900, TimeUnit.MILLISECONDS);
+            }, connectDelay, TimeUnit.MILLISECONDS);
         } catch (Throwable ignored) {
             // если пул уже закрыт (reload/выключение) — просто пускаем игрока сразу
             connectTarget(p);
         }
+    }
+
+    /** Обычная анимация: connect сразу после показа (для /login, 2FA). */
+    public void playCheckAnimation(ProxiedPlayer p, String doneTitleKey) {
+        playCheckAnimation(p, doneTitleKey, false);
     }
 
     public ServerInfo authServerInfo() {
@@ -539,7 +549,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             }
             String time = new java.text.SimpleDateFormat("dd.MM.yy HH:mm").format(new java.util.Date());
             String ipPart = (ip == null || ip.isEmpty()) ? "?" : ip;
-            db.createAlert(row.tgId,
+            db.createAlert(row.tgId, row.uuid.toString(),
                     "\uD83D\uDD13 Вход в аккаунт \u00AB" + row.nickname + "\u00BB\n"
                             + "\uD83C\uDF10 IP: " + ipPart + "\n"
                             + "\uD83D\uDD50 " + time,
@@ -573,26 +583,36 @@ public final class ElytrixAuthPlugin extends Plugin {
                 continue;
             }
             if (p.getServer() == null) {
-                // Игрок ещё не заведён ни на один сервер. Для клиентов 1.20.2+
-                // это значит: LoginSuccess ещё НЕ отправлен — клиент в состоянии
-                // LOGIN, и ЛЮБЫЕ пакеты UI (чат/actionbar/title/bossbar) сейчас
-                // сломают вход ("login_disconnect ... extra bytes"). Разрешён
-                // только кик по таймауту (login-кик — штатный пакет этой фазы).
-                if (s.deadline > 0 && now >= s.deadline) {
-                    messages().kick(p, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
-                }
-                continue;
+            // Игрок ещё не заведён ни на один сервер. Для клиентов 1.20.2+
+            // это значит: LoginSuccess ещё НЕ отправлен — клиент в состоянии
+            // LOGIN, и ЛЮБЫЕ пакеты UI (чат/actionbar/title/bossbar) сейчас
+            // сломают вход ("login_disconnect ... extra bytes"). Разрешён
+            // только кик по таймауту (login-кик — штатный пакет этой фазы).
+            if (s.deadline > 0 && now >= s.deadline) {
+                kickLater(p, 200, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
+            }
+            continue;
             }
             // Дополнительная защита: неавторизованный игрок не должен находиться
             // ни на каком сервере, кроме auth. В обычном потоке это исключено
             // (ServerConnectEvent всегда ведёт на auth), но если что-то пошло не так
             // (гонка, сторонний плагин-редирект) — сразу кикаем с понятной причиной.
+            // Кик смягчён: если игрок подключился к не-auth серверу только что
+            // (< 3 сек) — это может быть штатный реконнект после нашего же кика
+            // (kick + авто-реконнект клиента): тогда «Пройди авторизацию» вместо
+            // молчаливого разрыва не выглядит как ошибка сетевого протокола.
             if (!s.isAuthed()) {
                 ServerInfo curInfo = p.getServer().getInfo();
                 ServerInfo authInfo = authServerInfo();
                 if (authInfo != null && curInfo != null
                         && !curInfo.getName().equalsIgnoreCase(authInfo.getName())) {
-                    messages().kick(p, "kick-need-auth");
+                    long sinceMs = s.joinedServerAt == 0
+                            ? Long.MAX_VALUE : System.currentTimeMillis() - s.joinedServerAt;
+                    if (sinceMs < 3000) {
+                        messages().chat(p, "kick-need-auth-chat");
+                    } else {
+                        kickLater(p, 300, "kick-need-auth");
+                    }
                     continue;
                 }
             }
@@ -614,7 +634,9 @@ public final class ElytrixAuthPlugin extends Plugin {
         if (s.deadline > 0) {
             long left = s.deadline - now;
             if (left <= 0) {
-                messages().kick(p, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
+                // игрок онлайн и на сервере (фаза PLAY) — мягкий кик с задержкой,
+                // чтобы не рвать поток в неудачный момент
+                kickLater(p, 300, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
                 return;
             }
             updateBar(s, p, left);
@@ -638,14 +660,17 @@ public final class ElytrixAuthPlugin extends Plugin {
                     // боссбар недоступен — время показываем прямо в actionbar
                     tip += " &8• &f" + left + "&7 сек";
                 }
-                Visual.actionbar(p, tip);
+                if (!tip.equals(s.lastActionbar)) {
+                    s.lastActionbar = tip;
+                    Visual.actionbar(p, tip);
+                }
             }
         }
     }
 
     private void tickTg(AuthSession s, ProxiedPlayer p, long now) {
         if (s.deadline > 0 && now >= s.deadline) {
-            messages().kick(p, "kick-timeout-login");
+            kickLater(p, 300, "kick-timeout-login");
             return;
         }
         long ms = System.currentTimeMillis();
@@ -655,7 +680,10 @@ public final class ElytrixAuthPlugin extends Plugin {
             if (s.bar == null && s.deadline > 0) {
                 tip += " &8• &f" + Math.max(0, s.deadline - now) + "&7 сек";
             }
-            Visual.actionbar(p, tip);
+            if (!tip.equals(s.lastActionbar)) {
+                s.lastActionbar = tip;
+                Visual.actionbar(p, tip);
+            }
         }
         // title держим на экране и при ожидании Telegram
         if (ms - s.lastTitleAt >= 5000) {
@@ -680,7 +708,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             messages().chatList(p, "tg-confirmed", "player", s.nickname);
             playCheckAnimation(p, "check-done-tg");
         } else if ("denied".equals(st)) {
-            messages().kick(p, "kick-denied");
+            kickLater(p, 300, "kick-denied");
         } else if ("expired".equals(st)) {
             s.state = AuthSession.State.WAIT;
             s.requestId = -1;
@@ -722,6 +750,8 @@ public final class ElytrixAuthPlugin extends Plugin {
                     s.linkId = -1;
                     s.linkCode = null;
                     s.linkDoneAt = ms;
+                    // привязка случилась — в чат и actionbar: «Telegram привязан»
+                    // (аккаунт при этом уже в БД с этим TG; бот показал панель)
                     messages().chatList(p, "tg-linked", "player", s.nickname);
                     messages().actionbar(p, "addtg-actionbar-done");
                     return;

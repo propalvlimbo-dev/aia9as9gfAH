@@ -160,6 +160,7 @@ public final class Database {
             st.execute("CREATE TABLE IF NOT EXISTS tg_alerts ("
                     + " id BIGINT IDENTITY PRIMARY KEY,"
                     + " tg_id BIGINT NOT NULL,"
+                    + " player_uuid VARCHAR(36),"
                     + " text VARCHAR(500) NOT NULL,"
                     + " created_ts BIGINT NOT NULL,"
                     + " seen INT DEFAULT 0"
@@ -176,6 +177,8 @@ public final class Database {
         ensureColumn(c, "PLAYERS", "SESSION_EXPIRES", "ALTER TABLE players ADD COLUMN session_expires BIGINT");
         // 2FA-переключатель (Telegram-кнопка при входе); по умолчанию выключен
         ensureColumn(c, "PLAYERS", "TG_2FA", "ALTER TABLE players ADD COLUMN tg_2fa INT DEFAULT 0");
+        // uuid игрока в уведомлении — чтобы бот мог дать кнопку «Кикнуть» прямо под ним
+        ensureColumn(c, "TG_ALERTS", "PLAYER_UUID", "ALTER TABLE tg_alerts ADD COLUMN player_uuid VARCHAR(36)");
     }
 
     /** Добавляет колонку, если её ещё нет (HSQLDB 2.3 не умеет ADD COLUMN IF NOT EXISTS). */
@@ -496,6 +499,24 @@ public final class Database {
         }
     }
 
+    /** Сколько аккаунтов уже привязано к этому Telegram. */
+    public long countPlayersByTg(long tgId) {
+        try {
+            return withConn(c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT COUNT(*) FROM players WHERE tg_id = ?")) {
+                    ps.setLong(1, tgId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? rs.getLong(1) : 0L;
+                    }
+                }
+            });
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "countPlayersByTg error", e);
+            return -1L;
+        }
+    }
+
     /** Включить/выключить 2FA (кнопка подтверждения входа в Telegram). */
     public void setTg2fa(UUID uuid, boolean on) throws SQLException {
         withConn(c -> {
@@ -808,13 +829,15 @@ public final class Database {
     // ---------------- tg_alerts (уведомления боту о входах, 2FA выключена) ----------------
 
     /** Уведомление боту: игрок вошёл (2FA выключена, просто сообщение о входе). */
-    public void createAlert(long tgId, String text, long now) throws SQLException {
+    public void createAlert(long tgId, String playerUuid, String text, long now) throws SQLException {
         withConn(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO tg_alerts (tg_id, text, created_ts, seen) VALUES (?, ?, ?, 0)")) {
+                    "INSERT INTO tg_alerts (tg_id, player_uuid, text, created_ts, seen) "
+                            + "VALUES (?, ?, ?, ?, 0)")) {
                 ps.setLong(1, tgId);
-                ps.setString(2, text);
-                ps.setLong(3, now);
+                ps.setString(2, playerUuid);
+                ps.setString(3, text);
+                ps.setLong(4, now);
                 ps.executeUpdate();
             }
             return null;
@@ -824,10 +847,12 @@ public final class Database {
     /** Уведомление для бота: кто и вошёл. */
     public static final class AlertRow {
         public final long tgId;
+        public final String playerUuid;
         public final String text;
 
-        AlertRow(long tgId, String text) {
+        AlertRow(long tgId, String playerUuid, String text) {
             this.tgId = tgId;
+            this.playerUuid = playerUuid;
             this.text = text;
         }
     }
@@ -837,10 +862,12 @@ public final class Database {
         return withConn(c -> {
             List<AlertRow> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT id, tg_id, text FROM tg_alerts WHERE seen = 0 ORDER BY id ASC FETCH FIRST 100 ROWS ONLY")) {
+                    "SELECT id, tg_id, player_uuid, text FROM tg_alerts "
+                            + "WHERE seen = 0 ORDER BY id ASC FETCH FIRST 100 ROWS ONLY")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        out.add(new AlertRow(rs.getLong("tg_id"), rs.getString("text")));
+                        out.add(new AlertRow(rs.getLong("tg_id"),
+                                rs.getString("player_uuid"), rs.getString("text")));
                     }
                 }
             }
@@ -863,6 +890,19 @@ public final class Database {
             try {
                 c.setAutoCommit(false);
                 String playerUuid;
+                // 0) один Telegram — один аккаунт: повторно привязать нельзя.
+                //    (второй аккаунт к тому же TG привязать нельзя; тот же аккаунт
+                //    повторно по новому коду — тоже, пока он привязан)
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT COUNT(*) FROM players WHERE tg_id = ?")) {
+                    ps.setLong(1, tgId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next() && rs.getLong(1) > 0) {
+                            c.rollback();
+                            return "";
+                        }
+                    }
+                }
                 // 1) «занимаем» код (только open и не истёкший)
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE pending_links SET status = 'bound' "

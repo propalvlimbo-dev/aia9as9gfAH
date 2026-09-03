@@ -44,6 +44,8 @@ public final class AuthSession {
 
     /** для анти-спама actionbar в тике. */
     public volatile long lastTipAt = 0;
+    /** последний текст, отправленный в actionbar (не повторяем, пока не изменился). */
+    public volatile String lastActionbar = null;
     /** для анти-спама сообщений о блокировке чата. */
     public volatile long chatTipAt = 0;
     /** следующее периодическое напоминание «введи пароль» (эпоха-мс). */
@@ -60,6 +62,8 @@ public final class AuthSession {
     public volatile boolean welcomeScheduled = false;
     /** когда в последний раз показывали title (чтобы он не исчезал с экрана). */
     public volatile long lastTitleAt = 0;
+    /** epoch-мс момента подключения к текущему серверу (для смягчения киков). */
+    public volatile long joinedServerAt = 0;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 

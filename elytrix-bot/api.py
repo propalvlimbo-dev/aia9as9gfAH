@@ -66,10 +66,16 @@ class ElytrixApi:
         data = await self._request("POST", "/api/resolve", json={"id": request_id, "action": action})
         return bool(data.get("ok"))
 
-    async def link(self, code: str, tg_id: int) -> Optional[str]:
-        """Привязка по коду из /addtg. Возвращает ник игрока или None."""
-        data = await self._request("POST", "/api/link", json={"code": code, "tg_id": tg_id})
-        return data.get("nickname")
+    async def link(self, code: str, tg_id: int) -> tuple[Optional[str], Optional[str]]:
+        """Привязка по коду из /addtg.
+
+        Возвращает (ник, None) при успехе; при ошибке — (None, код_ошибки):
+        invalid_or_expired_code / tg_already_linked / ...
+        """
+        data = await self._call("POST", "/api/link", json={"code": code, "tg_id": tg_id})
+        if data.get("ok"):
+            return data.get("nickname"), None
+        return None, str(data.get("error", "unknown"))
 
     async def accounts(self, tg_id: int) -> list[dict[str, Any]]:
         """Аккаунты, привязанные к Telegram: [{uuid, nickname, online, tg2fa}, ...]."""

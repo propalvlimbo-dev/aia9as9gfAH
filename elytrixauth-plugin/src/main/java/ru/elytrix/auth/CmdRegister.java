@@ -6,8 +6,7 @@ import net.md_5.bungee.api.plugin.Command;
 
 import java.sql.SQLException;
 
-/** /reg <пароль> <пароль>  (алиас /register) */
-public final class CmdRegister extends Command {
+/** /reg <пароль> <пароль>  (алиас /register) */public final class CmdRegister extends Command {
 
     private final ElytrixAuthPlugin plugin;
 
@@ -86,7 +85,14 @@ public final class CmdRegister extends Command {
             return;
         }
 
-        // сразу выдаём сессию — при перезаходе с того же IP пароль не спросим
+        // Регистрация завершена — авторизуем сразу, но перевод на игровой сервер
+        // делаем ЧЕРЕЗ КОРОТКУЮ ЗАДЕРЖКУ, а не в момент команды: некоторые клиенты
+        // (и агрессивные прокси/VPN-цепочки) не успевают дочитать входящий поток
+        // и при быстром connect+kick ловят «ошибка сетевого протокола» в момент
+        // переключения. Титул успеха/приветствие при этом успевает показаться,
+        // авторизация уже стоит — игрок остаётся на auth пару секунд и затем
+        // уходит на target как обычно.
+        // Сразу выдаём сессию — при перезаходе с того же IP пароль не спросим.
         if (plugin.cfg().sessionsEnabled()) {
             try {
                 plugin.db().updateSession(s.uuid, s.ip,
@@ -98,7 +104,7 @@ public final class CmdRegister extends Command {
 
         plugin.markAuthed(s);
         plugin.messages().chatList(p, "register-ok", "player", s.nickname);
-        plugin.playCheckAnimation(p, "check-done-reg");
+        plugin.playCheckAnimation(p, "check-done-reg", true);
     }
 
     /** Пароль из одинаковых символов («aaaaaa», «111111») — слишком простой. */

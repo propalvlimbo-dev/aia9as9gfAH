@@ -40,9 +40,9 @@ public final class CmdLogin extends Command {
             return;
         }
 
-        // защита от перебора: по нику и по IP
+        // защита от перебора: по нику и по IP (кик отложенный — мягкий разрыв)
         if (plugin.isFailBlocked("nick:" + s.nickname.toLowerCase()) || plugin.isFailBlocked("ip:" + s.ip)) {
-            plugin.messages().kick(p, "kick-too-many-tries");
+            plugin.kickLater(p, 500, "kick-too-many-tries");
             return;
         }
 
@@ -62,13 +62,13 @@ public final class CmdLogin extends Command {
             if (plugin.cfg().ipBanEnabled()
                     && plugin.failCount("ip:" + s.ip) >= plugin.cfg().banIpAfterTries()) {
                 plugin.banIp(s.ip);
-                plugin.messages().kick(p, "kick-ip-banned",
+                plugin.kickLater(p, 500, "kick-ip-banned",
                         "time", String.valueOf(Math.max(1, plugin.cfg().banIpMinutes())));
                 return;
             }
             if (plugin.isFailBlocked("nick:" + s.nickname.toLowerCase())
                     || plugin.isFailBlocked("ip:" + s.ip)) {
-                plugin.messages().kick(p, "kick-too-many-tries");
+                plugin.kickLater(p, 500, "kick-too-many-tries");
                 return;
             }
             plugin.messages().chat(p, "wrong-password",

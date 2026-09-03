@@ -46,10 +46,13 @@ public final class ElytrixAuthListener implements Listener {
         String ip = p.getAddress() == null ? "?" : p.getAddress().getHostString();
         long now = ElytrixAuthPlugin.now();
 
-        // временный бан IP (перебор пароля): не пускаем даже с активной сессией
+        // временный бан IP (перебор пароля): не пускаем даже с активной сессией.
+        // Кик с задержкой: мгновенный разрыв в PostLogin (клиент ещё в фазе LOGIN,
+        // LoginSuccess не получен) на ряде клиентов/прокси выглядит как
+        // «ошибка сетевого протокола» — даём клиенту дочитать и закрыть поток штатно.
         long banLeft = plugin.ipBanLeftSec(ip);
         if (banLeft > 0) {
-            plugin.messages().kick(p, "kick-ip-banned",
+            plugin.kickLater(p, 400, "kick-ip-banned",
                     "time", String.valueOf(Math.max(1, (banLeft + 59) / 60)));
             return;
         }
@@ -64,7 +67,7 @@ public final class ElytrixAuthListener implements Listener {
                 }
                 String oip = o.getAddress() == null ? null : o.getAddress().getHostString();
                 if (ip.equals(oip) && ++same >= maxOnline) {
-                    plugin.messages().kick(p, "kick-online-ip-limit",
+                    plugin.kickLater(p, 400, "kick-online-ip-limit",
                             "max", String.valueOf(maxOnline));
                     return;
                 }
@@ -118,6 +121,9 @@ public final class ElytrixAuthListener implements Listener {
 
     /** Активная сессия → пускаем без пароля (состояние/БД, без пакетов игроку). */
     private void autoLogin(ProxiedPlayer p, AuthSession s, Database.PlayerRow row, String ip) {
+        // при привязанном TG и выключенной 2FA авто-вход — тоже «вход в аккаунт»:
+        // шлём боту уведомление (под ним кнопка «Кикнуть»)
+        plugin.notifyTgLogin(row, ip);
         plugin.markAuthed(s); // визуал внутри markAuthed сам отключится — сервера ещё нет
         long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
         try {
@@ -142,6 +148,7 @@ public final class ElytrixAuthListener implements Listener {
         if (s == null) {
             return;
         }
+        s.joinedServerAt = System.currentTimeMillis();
         if (s.isAuthed()) {
             // авто-вход по сессии (или заход на след. сервер после /login).
             // «Добро пожаловать» в actionbar покажет scheduleWelcome — через 2 сек

@@ -39,6 +39,17 @@ public final class CmdAddTg extends Command {
         }
 
         long now = ElytrixAuthPlugin.now();
+        // один Telegram — один аккаунт: повторная привязка невозможна,
+        // код создавать незачем — сразу говорим об этом
+        try {
+            Database.PlayerRow bound = plugin.db().findPlayer(s.nickname).orElse(null);
+            if (bound != null && bound.tgId != null) {
+                plugin.messages().chatList(p, "addtg-already-linked", "player", s.nickname);
+                return;
+            }
+        } catch (Exception ex) {
+            plugin.getLogger().warning("findPlayer(addtg) error: " + ex.getMessage());
+        }
         try {
             // сначала закрываем просроченные коды игрока (гигиена)
             plugin.db().expireStaleLinks(s.uuid, now);
