@@ -65,14 +65,22 @@ public final class Database {
     private final Deque<Connection> idle = new ArrayDeque<>();
     private int open;
 
-    public Database(File dataFolder, Logger log) throws SQLException {
+    public Database(File dataFolder, PluginConfig cfg, Logger log) throws SQLException {
         this.log = log;
-        File dbDir = new File(dataFolder, "db");
-        if (!dbDir.exists() && !dbDir.mkdirs()) {
-            throw new SQLException("Не удалось создать папку БД: " + dbDir);
+        // путь к файлу БД настраивается в config.properties (db.file),
+        // по умолчанию — db/elytrix внутри папки плагина
+        File dbFile = resolveDbFile(dataFolder, cfg.dbFile());
+        File parent = dbFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new SQLException("Не удалось создать папку БД: " + parent);
         }
-        this.url = "jdbc:hsqldb:file:" + new File(dbDir, "elytrix").getAbsolutePath()
-                + ";hsqldb.lock_file=false;hsqldb.default_table_type=cached";
+        // чтобы HSQLDB не спамила INFO-"Checkpoint" в консоль прокси
+        try {
+            java.util.logging.Logger.getLogger("org.hsqldb").setLevel(Level.WARNING);
+        } catch (SecurityException ignored) {
+        }
+        this.url = "jdbc:hsqldb:file:" + dbFile.getAbsolutePath()
+                + ";hsqldb.lock_file=false;hsqldb.default_table_type=cached;sql.syntax_mys=true";
         try {
             Class.forName("org.hsqldb.jdbc.JDBCDriver");
         } catch (ClassNotFoundException e) {
@@ -82,6 +90,12 @@ public final class Database {
         try (Connection c = DriverManager.getConnection(url)) {
             ensureSchema(c);
         }
+    }
+
+    /** Относительный db.file считается от папки плагина; абсолютный — как есть. */
+    private static File resolveDbFile(File dataFolder, String dbFile) {
+        File f = new File(dbFile);
+        return f.isAbsolute() ? f : new File(dataFolder, dbFile);
     }
 
     /** Таблицы создаются сами при старте; повторные запуски безопасны. */
@@ -188,6 +202,14 @@ public final class Database {
             closeQuiet(c);
         }
         open = 0;
+        // чистый checkpoint + компактизация: при следующем старте папка БД чистая
+        try (Connection sc = DriverManager.getConnection(url)) {
+            try (Statement st = sc.createStatement()) {
+                st.execute("SHUTDOWN COMPACT");
+            }
+        } catch (SQLException e) {
+            log.log(Level.FINE, "shutdown db: " + e.getMessage());
+        }
     }
 
     private <T> T withConn(SqlWork<T> work) throws SQLException {

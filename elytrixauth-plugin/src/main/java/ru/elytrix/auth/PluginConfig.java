@@ -108,6 +108,9 @@ public final class PluginConfig {
     public String authServer()   { return get("auth.server", "auth"); }
     public String targetServer() { return get("target.server", "grief"); }
 
+    /** Путь к файлу встроенной БД (HSQLDB). Относительный — от папки плагина. */
+    public String dbFile()       { return get("db.file", "db/elytrix"); }
+
     public int    loginTimeout() { return getInt("login.timeout.seconds", 180); }
     public int    maxTries()     { return Math.max(1, getInt("max.failed.tries", 5)); }
     public int    tryWindow()    { return getInt("failed.window.seconds", 60); }

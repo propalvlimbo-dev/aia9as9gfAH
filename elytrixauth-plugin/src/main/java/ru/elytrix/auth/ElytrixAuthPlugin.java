@@ -58,10 +58,10 @@ public final class ElytrixAuthPlugin extends Plugin {
             return;
         }
 
-        // Встраиваемая БД (Derby): файл в папке плагина, сервер БД не нужен
+        // Встраиваемая БД (HSQLDB): файл по db.file из config.properties, сервер БД не нужен
         try {
-            db = new Database(dataFolder, getLogger());
-            getLogger().info("Встроенная БД готова (таблицы созданы).");
+            db = new Database(dataFolder, cfg, getLogger());
+            getLogger().info("Встроенная БД готова: " + cfg.dbFile() + " (таблицы созданы).");
         } catch (SQLException e) {
             getLogger().log(Level.SEVERE, "Не удалось инициализировать встроенную БД: " + e.getMessage(), e);
             return;
