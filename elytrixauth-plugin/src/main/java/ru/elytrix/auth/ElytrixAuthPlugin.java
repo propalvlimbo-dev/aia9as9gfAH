@@ -112,7 +112,12 @@ public final class ElytrixAuthPlugin extends Plugin {
             api.stop();
         }
         if (db != null) {
-            db.close();
+            try {
+                db.close();
+                getLogger().info("ElytrixAuth выключен: БД сохранена (SHUTDOWN COMPACT), HTTP API остановлен.");
+            } catch (RuntimeException e) {
+                getLogger().warning("Ошибка при закрытии БД: " + e.getMessage());
+            }
         }
         sessions.clear();
         instance = null;

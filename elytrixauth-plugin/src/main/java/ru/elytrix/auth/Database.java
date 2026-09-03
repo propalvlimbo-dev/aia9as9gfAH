@@ -74,9 +74,13 @@ public final class Database {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new SQLException("Не удалось создать папку БД: " + parent);
         }
-        // чтобы HSQLDB не спамила INFO-"Checkpoint" в консоль прокси
+        // HSQLDB умеет писать служебные INFO (dataFileCache open, checkpoint и т.п.)
+        // и через java.util.logging, и через свой SimpleLog в System.out.
+        // NullCordX выводит всё это в консоль как ERROR, поэтому глушим JUL-логгер
+        // насовсем, а потоки System.out/err перехватываем на время инициализации БД
+        // (самый шумный момент — открытие файла БД и создание таблиц).
         try {
-            java.util.logging.Logger.getLogger("org.hsqldb").setLevel(Level.WARNING);
+            java.util.logging.Logger.getLogger("org.hsqldb").setLevel(Level.OFF);
         } catch (SecurityException ignored) {
         }
         this.url = "jdbc:hsqldb:file:" + dbFile.getAbsolutePath()
@@ -86,9 +90,26 @@ public final class Database {
         } catch (ClassNotFoundException e) {
             throw new SQLException("HSQLDB driver не вшит в jar плагина", e);
         }
-        // проверка соединения + автосоздание таблиц
-        try (Connection c = DriverManager.getConnection(url)) {
-            ensureSchema(c);
+
+        java.io.PrintStream realOut = System.out;
+        java.io.PrintStream realErr = System.err;
+        java.io.ByteArrayOutputStream suppressed = new java.io.ByteArrayOutputStream();
+        try {
+            // HSQLDB (SimpleLog) пишет свои INFO в System.out, а не в JUL/SLF4J,
+            // поэтому на время инициализации БД глушим оба потока.
+            java.io.PrintStream silent = new java.io.PrintStream(suppressed, true,
+                    java.nio.charset.StandardCharsets.UTF_8);
+            System.setOut(silent);
+            System.setErr(silent);
+            try (Connection c = DriverManager.getConnection(url)) {
+                ensureSchema(c);
+            }
+        } finally {
+            System.setOut(realOut);
+            System.setErr(realErr);
+        }
+        if (suppressed.size() > 0) {
+            log.log(Level.FINE, "HSQLDB init log подавлен (" + suppressed.size() + " байт)");
         }
     }
 
@@ -129,19 +150,33 @@ public final class Database {
                     + " expires_ts BIGINT NOT NULL"
                     + ")");
         }
-        // индексы
-        createIndexIfMissing(c, "idx_players_tg", "CREATE INDEX IF NOT EXISTS idx_players_tg ON players(tg_id)");
-        createIndexIfMissing(c, "idx_links_code", "CREATE INDEX IF NOT EXISTS idx_links_code ON pending_links(code)");
-        createIndexIfMissing(c, "idx_links_status", "CREATE INDEX IF NOT EXISTS idx_links_status ON pending_links(status, expires_ts)");
-        createIndexIfMissing(c, "idx_requests_status", "CREATE INDEX IF NOT EXISTS idx_requests_status ON login_requests(status, expires_ts)");
-        createIndexIfMissing(c, "idx_requests_player", "CREATE INDEX IF NOT EXISTS idx_requests_player ON login_requests(player_uuid)");
+        // индексы (HSQLDB не понимает IF NOT EXISTS — проверяем через системные таблицы)
+        createIndexIfMissing(c, "players", "idx_players_tg", "CREATE INDEX idx_players_tg ON players(tg_id)");
+        createIndexIfMissing(c, "pending_links", "idx_links_code", "CREATE INDEX idx_links_code ON pending_links(code)");
+        createIndexIfMissing(c, "pending_links", "idx_links_status", "CREATE INDEX idx_links_status ON pending_links(status, expires_ts)");
+        createIndexIfMissing(c, "login_requests", "idx_requests_status", "CREATE INDEX idx_requests_status ON login_requests(status, expires_ts)");
+        createIndexIfMissing(c, "login_requests", "idx_requests_player", "CREATE INDEX idx_requests_player ON login_requests(player_uuid)");
     }
 
-    private void createIndexIfMissing(Connection c, String name, String ddl) {
+    private void createIndexIfMissing(Connection c, String table, String name, String ddl) {
+        // System-index-запросы HSQLDB: INFORMATION_SCHEMA.SYSTEM_INDEXINFO (table_name, index_name)
+        String existsSql = "SELECT 1 FROM INFORMATION_SCHEMA.SYSTEM_INDEXINFO "
+                + "WHERE TABLE_NAME = ? AND INDEX_NAME = ?";
+        try (PreparedStatement ps = c.prepareStatement(existsSql)) {
+            ps.setString(1, table.toUpperCase(java.util.Locale.ROOT));
+            ps.setString(2, name.toUpperCase(java.util.Locale.ROOT));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return; // уже есть
+                }
+            }
+        } catch (SQLException e) {
+            // если запрос к системной таблице не сработал — пытаемся создать вслепую
+        }
         try (Statement st = c.createStatement()) {
             st.execute(ddl);
         } catch (SQLException e) {
-            log.log(Level.WARNING, "Не удалось создать индекс " + name + ": " + e.getMessage());
+            log.log(Level.FINE, "Не удалось создать индекс " + name + ": " + e.getMessage());
         }
     }
 
