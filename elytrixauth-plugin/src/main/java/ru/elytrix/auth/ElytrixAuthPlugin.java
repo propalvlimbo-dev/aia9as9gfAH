@@ -1,5 +1,6 @@
 package ru.elytrix.auth;
 
+import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
@@ -37,6 +38,8 @@ public final class ElytrixAuthPlugin extends Plugin {
     private final Map<UUID, AuthSession> sessions = new ConcurrentHashMap<>();
     /** ip/nick -> [попытки, окно_старт_epoch] для лимита неверных паролей. */
     private final Map<String, long[]> failCounters = new ConcurrentHashMap<>();
+    /** ожидающие подтверждения админ-сбросы: ник(lower) -> [kind(0=full,1=pass), expiry_ms]. */
+    private final Map<String, long[]> pendingAdminResets = new ConcurrentHashMap<>();
     private boolean authServerMissingLogged = false;
 
     @Override
@@ -80,6 +83,8 @@ public final class ElytrixAuthPlugin extends Plugin {
         pm.registerCommand(this, new CmdRegister(this));
         pm.registerCommand(this, new CmdLogin(this));
         pm.registerCommand(this, new CmdAddTg(this));
+        pm.registerCommand(this, new CmdAdmin(this));
+        pm.registerCommand(this, new CmdLogout(this));
         pm.registerListener(this, new ElytrixAuthListener(this));
 
         // тик каждые 500 мс: таймер/боссбар, actionbar, опрос 2FA и привязки
@@ -176,6 +181,7 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.requestId = -1;
             s.sessionDropped = false;
         }
+        s.lastTitleAt = 0;
         return s;
     }
 
@@ -184,6 +190,118 @@ public final class ElytrixAuthPlugin extends Plugin {
         if (s != null && s.bar != null) {
             s.bar.remove();
             s.bar = null;
+        }
+    }
+
+    /** Выполнить задачу в фоне (поток плагина), чтобы не вешать тик-поток. */
+    public void runAsync(Runnable r) {
+        if (executor != null && !executor.isShutdown()) {
+            executor.execute(r);
+        } else {
+            r.run();
+        }
+    }
+
+    /** Полная перезагрузка: config.properties, messages.yml, БД, HTTP API. */
+    public void reloadPlugin() {
+        File dataFolder = getDataFolder();
+        File configFile = new File(dataFolder, "config.properties");
+        PluginConfig.saveDefaultConfig(configFile);
+        try {
+            cfg = new PluginConfig(configFile);
+        } catch (Exception e) {
+            getLogger().severe("reload: не удалось прочитать config.properties: " + e.getMessage());
+        }
+        messages = Messages.load(new File(dataFolder, "messages.yml"), getLogger());
+        try {
+            if (api != null) {
+                api.stop();
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (db != null) {
+                db.close();
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            db = new Database(dataFolder, cfg, getLogger());
+        } catch (SQLException e) {
+            getLogger().log(Level.SEVERE, "reload: не удалось открыть БД: " + e.getMessage(), e);
+        }
+        api = new ApiServer(cfg, db, getLogger());
+        try {
+            api.start();
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "reload: не удалось запустить HTTP API на порту "
+                    + cfg.apiPort() + ": " + e.getMessage(), e);
+        }
+        failCounters.clear();
+        pendingAdminResets.clear();
+        getLogger().info("ElytrixAuth перезагружен (config, messages, БД, HTTP API).");
+    }
+
+    /**
+     * Админ-сброс с подтверждением: первую команду запоминаем, реально сбрасываем
+     * только если админ повторил её в течение 15 секунд.
+     * @param passwordOnly true = только пароль, false = пароль + Telegram.
+     */
+    public void handleAdminReset(CommandSender sender, String nick, boolean passwordOnly) {
+        String key = nick.toLowerCase(java.util.Locale.ROOT);
+        int kind = passwordOnly ? 1 : 0;
+        long ms = System.currentTimeMillis();
+        long[] pending = pendingAdminResets.get(key);
+        if (pending == null || ms > pending[1] || pending[0] != kind) {
+            pendingAdminResets.put(key, new long[]{kind, ms + 15_000});
+            messages().sendComp(sender, "admin-confirm-reset", "player", nick,
+                    "action", passwordOnly ? "сброс пароля" : "полный сброс");
+            return;
+        }
+        pendingAdminResets.remove(key);
+
+        Database.PlayerRow row;
+        try {
+            row = db.findPlayerCi(nick).orElse(null);
+        } catch (Exception e) {
+            row = null;
+        }
+        if (row == null) {
+            messages().sendComp(sender, "admin-player-not-found", "player", nick);
+            return;
+        }
+        try {
+            if (passwordOnly) {
+                db.adminResetPassword(row.uuid);
+            } else {
+                db.adminResetAccount(row.uuid, now());
+            }
+        } catch (SQLException e) {
+            getLogger().severe("adminReset error: " + e.getMessage());
+            messages().sendComp(sender, "db-error");
+            return;
+        }
+        // снимаем игрока с сети, если он онлайн — пусть зайдёт и создаст новый пароль
+        ProxiedPlayer online = getProxy().getPlayer(row.uuid);
+        if (online != null) {
+            leave(row.uuid);
+            messages().kick(online, "admin-kick-reset");
+        }
+        messages().sendComp(sender, passwordOnly ? "admin-resetpass-done" : "admin-reset-done",
+                "player", row.nickname);
+    }
+
+    /** Title на экране в зависимости от состояния (ре-показ, чтобы не исчезал). */
+    private void showAuthTitle(AuthSession s, ProxiedPlayer p) {
+        try {
+            if (s.state == AuthSession.State.TG) {
+                Visual.title(p, messages().raw("join-title-login"), messages().raw("title-subtitle-tg"));
+            } else if (s.needReg) {
+                Visual.title(p, messages().raw("join-title-reg"), messages().raw("join-subtitle-reg"));
+            } else {
+                Visual.title(p, messages().raw("join-title-login"), messages().raw("join-subtitle-login"));
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -327,6 +445,11 @@ public final class ElytrixAuthPlugin extends Plugin {
             }
             updateBar(s, p, left);
             long ms = System.currentTimeMillis();
+            // title не убираем с экрана: раз в ~5 сек показываем заново
+            if (ms - s.lastTitleAt >= 5000) {
+                s.lastTitleAt = ms;
+                showAuthTitle(s, p);
+            }
             // периодическое напоминание прямо в чат (раз в ~10 сек, не чаще)
             if (ms - s.remindAt >= 10_000) {
                 s.remindAt = ms;
@@ -360,6 +483,11 @@ public final class ElytrixAuthPlugin extends Plugin {
             }
             Visual.actionbar(p, tip);
         }
+        // title держим на экране и при ожидании Telegram
+        if (ms - s.lastTitleAt >= 5000) {
+            s.lastTitleAt = ms;
+            showAuthTitle(s, p);
+        }
         updateBar(s, p, Math.max(0, s.deadline - now));
 
         String st = db.pollLoginRequest(s.requestId);
@@ -385,12 +513,14 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.deadline = now + cfg.loginTimeout();
             s.totalSec = cfg.loginTimeout();
             messages().chatList(p, "tg-expired");
-            // возвращаем интерфейс входа
+            // возвращаем интерфейс входа (боссбар, title, actionbar)
             if (s.bar != null) {
                 s.bar.remove();
                 s.bar = null;
             }
+            s.lastTitleAt = 0;
             showAuthUi(s);
+            showAuthTitle(s, p);
         }
     }
 

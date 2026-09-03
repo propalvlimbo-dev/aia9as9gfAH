@@ -47,8 +47,12 @@ public final class CmdLogin extends Command {
         }
 
         Database.PlayerRow row = plugin.db().findPlayer(s.nickname).orElse(null);
-        if (row == null || row.passwordHash == null) {
+        if (row == null) {
             plugin.messages().chat(p, "not-registered");
+            return;
+        }
+        if (row.passwordHash == null) {
+            plugin.messages().chat(p, "account-no-password");
             return;
         }
         if (!PasswordHash.verify(args[0], row.passwordHash)) {

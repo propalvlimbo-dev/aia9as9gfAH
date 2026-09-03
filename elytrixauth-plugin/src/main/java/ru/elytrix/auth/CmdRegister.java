@@ -47,14 +47,21 @@ public final class CmdRegister extends Command {
             plugin.messages().chat(p, "pass-long", "max", "64");
             return;
         }
-        if (plugin.db().findPlayer(s.nickname).isPresent()) {
+        // аккаунт уже есть — но без пароля (сброс админом) — тогда просто задаём новый
+        Database.PlayerRow existing = plugin.db().findPlayer(s.nickname).orElse(null);
+        if (existing != null && existing.passwordHash != null) {
             plugin.messages().chat(p, "account-exists");
             return;
         }
 
         try {
-            plugin.db().createPlayer(s.uuid, s.nickname,
-                    PasswordHash.create(args[0]), s.ip, ElytrixAuthPlugin.now());
+            String hash = PasswordHash.create(args[0]);
+            if (existing != null) {
+                plugin.db().setPassword(existing.uuid, hash);
+            } else {
+                plugin.db().createPlayer(s.uuid, s.nickname,
+                        hash, s.ip, ElytrixAuthPlugin.now());
+            }
         } catch (SQLException e) {
             plugin.messages().chat(p, "db-error");
             plugin.getLogger().severe("register error: " + e.getMessage());

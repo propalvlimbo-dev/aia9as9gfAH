@@ -13,6 +13,7 @@ join-title-reg: '&#F8BEFBРегистрация'
 join-subtitle-reg: '&fКоманда: &#F8BEFB/reg &7<пароль> <пароль>'
 join-title-login: '&#F8BEFBВход'
 join-subtitle-login: '&fКоманда: &#F8BEFB/login &7<пароль>'
+title-subtitle-tg: '&fПодтверди вход в &dTelegram&7 — нажми кнопку &a«Войти»'
 
 # Первое сообщение при заходе (аккаунта нет в базе)
 join-msg-reg:
@@ -90,6 +91,7 @@ pass-mismatch: '{prefix} &cПароли не совпадают &7— введи
 pass-short: '{prefix} &cПароль слишком короткий &8(&7минимум &f{min}&8)'
 pass-long: '{prefix} &cПароль слишком длинный &8(&7максимум &f{max}&8)'
 not-registered: '{prefix} &cАккаунт не найден &7— сначала &fзарегистрируйся&7: &#F8BEFB/reg &7<пароль> <пароль>'
+account-no-password: '{prefix} &cУ аккаунта нет пароля &7— создай новый: &#F8BEFB/reg &7<пароль> <пароль>'
 account-exists: '{prefix} &cАккаунт уже существует &7— войди: &#F8BEFB/login &7<пароль>'
 wrong-password: '{prefix} &cНеверный пароль &8(&7осталось &f{left}&8)'
 wrong-password-unknown: '{prefix} &cНеверный пароль'
@@ -160,3 +162,30 @@ tg-linked:
   - '&#F8BEFB┃ &fСтатус: &aаккаунт защищён'
   - '&7● &fВход: &#F8BEFB/login &7+ кнопка &a«Войти»&7 в Telegram'
   - ''
+
+# ---------- выход из аккаунта (/logout) ----------
+
+logout-not-authed: '{prefix} &cТы не авторизован'
+kick-logged-out: '&cТы вышел с аккаунта\n\n&7Войди заново:\n&#F8BEFB/login <пароль>'
+
+# ---------- админ-команды (/elytrixauth) ----------
+
+admin-no-perm: '{prefix} &cНедостаточно прав'
+admin-usage:
+  - ''
+  - '{prefix} &#F8BEFBАдмин-панель ElytrixAuth'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/elytrixauth reload'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/elytrixauth reset <ник>'
+  - '&#F8BEFB┃ &fКоманда: &#F8BEFB/elytrixauth resetpassword <ник>'
+  - '&7● &freload &7— перезагрузить конфиг, сообщения и БД'
+  - '&7● &freset &7— полный сброс: пароль + привязка Telegram'
+  - '&7● &fresetpassword &7— сброс только пароля'
+  - ''
+admin-usage-reset: '{prefix} &fИспользование: &#F8BEFB/elytrixauth reset <ник>'
+admin-usage-resetpassword: '{prefix} &fИспользование: &#F8BEFB/elytrixauth resetpassword <ник>'
+admin-reloaded: '{prefix} &aПлагин перезагружен: конфиг, сообщения и БД'
+admin-player-not-found: '{prefix} &cИгрок &f{player}&c не найден'
+admin-confirm-reset: '{prefix} &eПодтверждение: &f{action}&e для &f{player}&e. &7Повтори команду в течение &f15&7 сек'
+admin-reset-done: '{prefix} &aГотово: аккаунт &f{player}&a — пароль и привязка Telegram сброшены'
+admin-resetpass-done: '{prefix} &aГотово: аккаунт &f{player}&a — пароль сброшен'
+admin-kick-reset: '&cАдминистратор сбросил твой пароль\n\n&7Зайди заново и создай новый:\n&#F8BEFB/reg <пароль> <пароль>'

@@ -347,6 +347,82 @@ public final class Database {
         });
     }
 
+    /** Регистронезависимый поиск игрока (для админ-команд). */
+    public Optional<PlayerRow> findPlayerCi(String nickname) {
+        try {
+            return withConn(c -> {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "SELECT uuid, nickname, password_hash, tg_id, session_ip, session_expires "
+                                + "FROM players WHERE LOWER(nickname) = LOWER(?)")) {
+                    ps.setString(1, nickname);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? Optional.of(row(rs)) : Optional.empty();
+                    }
+                }
+            });
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "findPlayerCi error", e);
+            return Optional.empty();
+        }
+    }
+
+    /** Установить новый пароль существующему аккаунту (после сброса админом). */
+    public void setPassword(UUID uuid, String passwordHash) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET password_hash = ? WHERE uuid = ?")) {
+                ps.setString(1, passwordHash);
+                ps.setString(2, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Сбросить сессию (например, /logout) — при следующем входе спросим пароль. */
+    public void clearSession(UUID uuid) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET session_ip = NULL, session_expires = NULL WHERE uuid = ?")) {
+                ps.setString(1, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Админ: полный сброс — пароль, привязка Telegram и сессия удаляются. */
+    public void adminResetAccount(UUID uuid, long now) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET password_hash = NULL, tg_id = NULL, "
+                            + "session_ip = NULL, session_expires = NULL WHERE uuid = ?")) {
+                ps.setString(1, uuid.toString());
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE pending_links SET status = 'expired' "
+                            + "WHERE player_uuid = ? AND status = 'open'")) {
+                ps.setString(1, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Админ: сброс только пароля (привязка Telegram и ник сохраняются). */
+    public void adminResetPassword(UUID uuid) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET password_hash = NULL, "
+                            + "session_ip = NULL, session_expires = NULL WHERE uuid = ?")) {
+                ps.setString(1, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
     public void updateLastLogin(UUID uuid, String ip, long now) throws SQLException {
         withConn(c -> {
             try (PreparedStatement ps = c.prepareStatement(

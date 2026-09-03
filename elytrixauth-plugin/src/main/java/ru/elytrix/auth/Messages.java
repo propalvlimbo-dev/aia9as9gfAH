@@ -354,6 +354,23 @@ public final class Messages {
         }
     }
 
+    /** Отправка игроку или в консоль (у всех CommandSender есть sendMessage(BaseComponent...)). */
+    public void sendComp(net.md_5.bungee.api.CommandSender sender, String key, String... args) {
+        BaseComponent[] c = compKey(key, args);
+        if (c.length > 0) {
+            sender.sendMessage(c);
+        }
+    }
+
+    public void sendCompList(net.md_5.bungee.api.CommandSender sender, String key, String... args) {
+        for (String line : rawList(key, args)) {
+            BaseComponent[] c = comp(line);
+            if (c.length > 0) {
+                sender.sendMessage(c);
+            }
+        }
+    }
+
     public void actionbar(ProxiedPlayer p, String key, String... args) {
         BaseComponent[] c = compKey(key, args);
         if (c.length > 0) {

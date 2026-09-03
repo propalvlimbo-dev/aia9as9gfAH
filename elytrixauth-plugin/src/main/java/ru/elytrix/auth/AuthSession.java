@@ -48,6 +48,8 @@ public final class AuthSession {
     public volatile long authedAt = 0;
     /** одноразовая подсказка про /addtg уже показана. */
     public volatile boolean tgHintShown = false;
+    /** когда в последний раз показывали title (чтобы он не исчезал с экрана). */
+    public volatile long lastTitleAt = 0;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 

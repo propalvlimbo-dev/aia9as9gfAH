@@ -37,9 +37,9 @@ public final class Visual {
             Title t = ProxyServer.getInstance().createTitle()
                     .title(Messages.comp(main))
                     .subTitle(Messages.comp(sub))
-                    .fadeIn(10)
-                    .stay(80)
-                    .fadeOut(20);
+                    .fadeIn(5)
+                    .stay(100)
+                    .fadeOut(15);
             t.send(p);
         } catch (Throwable ignored) {
         }
