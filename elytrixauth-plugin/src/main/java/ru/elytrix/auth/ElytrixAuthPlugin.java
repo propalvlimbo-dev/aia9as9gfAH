@@ -205,7 +205,8 @@ public final class ElytrixAuthPlugin extends Plugin {
             s.requestId = -1;
             s.sessionDropped = false;
         }
-        s.lastTitleAt = 0;
+        s.lastTitleAt = System.currentTimeMillis();
+        s.lastTipAt = System.currentTimeMillis();
         s.joinUiShown = false;
         s.uiPending = false;
         s.welcomeScheduled = false;
@@ -754,6 +755,14 @@ public final class ElytrixAuthPlugin extends Plugin {
                 kickLater(p, 300, s.needReg ? "kick-timeout-reg" : "kick-timeout-login");
                 return;
             }
+            // UI (боссбар/title/actionbar/напоминания) — только ПОСЛЕ того, как
+            // отложенный первый экран показан (joinUiShown). До этого тик не шлёт
+            // игроку ни одного пакета: на NullCordX/FlameCord пакеты в первые
+            // секунды после подключения (пока коннект до auth доводится) рвут
+            // соединение («Сервер, на котором вы находились, выключился»).
+            if (!s.joinUiShown) {
+                return;
+            }
             updateBar(s, p, left);
             long ms = System.currentTimeMillis();
             // title не убираем с экрана: раз в ~5 сек показываем заново
@@ -786,6 +795,11 @@ public final class ElytrixAuthPlugin extends Plugin {
     private void tickTg(AuthSession s, ProxiedPlayer p, long now) {
         if (s.deadline > 0 && now >= s.deadline) {
             kickLater(p, 300, "kick-timeout-login");
+            return;
+        }
+        // UI — только после отложенного первого экрана (см. tickWait): до этого
+        // тик игроку ничего не шлёт, чтобы не рвать коннект в окне подключения.
+        if (!s.joinUiShown) {
             return;
         }
         long ms = System.currentTimeMillis();
