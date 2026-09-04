@@ -376,6 +376,37 @@ public final class ElytrixAuthPlugin extends Plugin {
                 "player", row.nickname);
     }
 
+    /** Админ: заморозить/разморозить аккаунт напрямую (без бота). */
+    public void handleAdminFreeze(CommandSender sender, String nick, boolean frozen) {
+        Database.PlayerRow row;
+        try {
+            row = db.findPlayerCi(nick).orElse(null);
+        } catch (Exception e) {
+            row = null;
+        }
+        if (row == null) {
+            messages().sendComp(sender, "admin-player-not-found", "player", nick);
+            return;
+        }
+        try {
+            db.setFrozen(row.uuid, frozen);
+        } catch (SQLException e) {
+            getLogger().severe("setFrozen(admin) error: " + e.getMessage());
+            messages().sendComp(sender, "db-error");
+            return;
+        }
+        if (frozen) {
+            ProxiedPlayer online = getProxy().getPlayer(row.uuid);
+            if (online != null) {
+                leave(row.uuid);
+                messages().kick(online, "kick-frozen");
+            }
+            messages().sendComp(sender, "admin-freeze-done", "player", row.nickname);
+        } else {
+            messages().sendComp(sender, "admin-unfreeze-done", "player", row.nickname);
+        }
+    }
+
     /** Title на экране в зависимости от состояния (ре-показ, чтобы не исчезал). */
     private void showAuthTitle(AuthSession s, ProxiedPlayer p) {
         try {

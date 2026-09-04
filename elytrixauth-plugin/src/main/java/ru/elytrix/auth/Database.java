@@ -436,12 +436,15 @@ public final class Database {
         });
     }
 
-    /** Админ: полный сброс — пароль, привязка Telegram и сессия удаляются. */
+    /** Админ: полный сброс — пароль, привязка Telegram и сессия удаляются.
+     *  Заморозка тоже снимается: иначе замороженный аккаунт «переживает» сброс,
+     *  а т.к. tg_id обнулён — владелец уже не сможет разморозить его через бота. */
     public void adminResetAccount(UUID uuid, long now) throws SQLException {
         withConn(c -> {
             try (PreparedStatement ps = c.prepareStatement(
                     "UPDATE players SET password_hash = NULL, tg_id = NULL, "
-                            + "session_ip = NULL, session_expires = NULL WHERE uuid = ?")) {
+                            + "session_ip = NULL, session_expires = NULL, "
+                            + "frozen = 0, tg2fa = 0, tg_notify = 1 WHERE uuid = ?")) {
                 ps.setString(1, uuid.toString());
                 ps.executeUpdate();
             }

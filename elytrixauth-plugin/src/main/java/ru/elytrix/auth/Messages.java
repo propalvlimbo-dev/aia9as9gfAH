@@ -554,6 +554,11 @@ public final class Messages {
 
     public void kick(ProxiedPlayer p, String key, String... args) {
         String text = raw(key, args);
+        if (text == null || text.isEmpty()) {
+            // Ключ пропал (messages.yml старой версии): пустой текст разрыва клиент
+            // показывает как странный «сервер выключился» — даём внятный текст.
+            text = "&cОтключено от сервера";
+        }
         p.disconnect(comp(text));
     }
 }

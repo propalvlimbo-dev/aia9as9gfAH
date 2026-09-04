@@ -11,6 +11,8 @@ import java.util.Locale;
  *   /elytrixauth reload                 — перезагрузить конфиг/сообщения/БД
  *   /elytrixauth reset <ник>            — полный сброс (пароль + Telegram), с подтверждением
  *   /elytrixauth resetpassword <ник>    — сброс только пароля, с подтверждением
+ *   /elytrixauth freeze <ник>           — экстренно заморозить аккаунт (вход запрещён)
+ *   /elytrixauth unfreeze <ник>         — снять заморозку
  */
 public final class CmdAdmin extends Command {
 
@@ -56,6 +58,22 @@ public final class CmdAdmin extends Command {
                 }
                 final String nickPass = args[1];
                 plugin.runAsync(() -> plugin.handleAdminReset(sender, nickPass, true));
+                break;
+            case "freeze":
+                if (args.length < 2) {
+                    plugin.messages().sendComp(sender, "admin-usage-freeze");
+                    return;
+                }
+                final String nickFreeze = args[1];
+                plugin.runAsync(() -> plugin.handleAdminFreeze(sender, nickFreeze, true));
+                break;
+            case "unfreeze":
+                if (args.length < 2) {
+                    plugin.messages().sendComp(sender, "admin-usage-unfreeze");
+                    return;
+                }
+                final String nickUnfreeze = args[1];
+                plugin.runAsync(() -> plugin.handleAdminFreeze(sender, nickUnfreeze, false));
                 break;
             default:
                 plugin.messages().sendCompList(sender, "admin-usage");
