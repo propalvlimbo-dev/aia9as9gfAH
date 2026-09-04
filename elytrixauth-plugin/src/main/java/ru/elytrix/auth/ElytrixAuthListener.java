@@ -191,51 +191,75 @@ public final class ElytrixAuthListener implements Listener {
                 + " -> " + serverName + " (не авторизован, needReg=" + s.needReg
                 + ", UI=" + s.joinUiShown + ")");
         if (!s.joinUiShown && !s.uiPending) {
-            // Первый показ UI (чат-приветствие, title, боссбар) откладываем ~1 сек:
+            // Первый показ UI (чат-приветствие, title, боссбар) откладываем:
             // в момент самого переключения на auth (ServerConnected) клиент/прокси
-            // ещё доводят коннект, и мгновенный поток пакетов на некоторых форках
-            // (NullCordX/FlameCord с защитой от ботов) рвёт соединение.
+            // ещё доводят коннект, и поток пакетов в этом окне на некоторых форках
+            // (NullCordX/FlameCord с защитой от ботов) рвёт соединение. Ждём, пока
+            // у игрока реально появится сервер, и только потом шлём пакеты.
             s.uiPending = true;
             final UUID uuid = p.getUniqueId();
             final AuthSession sess = s;
             final boolean needReg = s.needReg;
             final boolean dropped = s.sessionDropped;
             final int total = Math.max(1, s.totalSec > 0 ? s.totalSec : plugin.cfg().loginTimeout());
-            plugin.runLater(1000, () -> {
-                try {
-                    AuthSession cur = plugin.session(uuid);
-                    if (cur != sess || cur.joinUiShown) {
-                        return; // сессия сменилась / UI уже показан
-                    }
-                    ProxiedPlayer pp = plugin.proxy().getPlayer(uuid);
-                    if (pp == null || !pp.isConnected() || cur.isAuthed()) {
-                        return;
-                    }
-                    cur.joinUiShown = true;
-                    cur.uiPending = false;
-                    if (dropped) {
-                        plugin.messages().chatList(pp, "session-ip-changed");
-                    }
-                    if (needReg) {
-                        plugin.messages().chatList(pp, "join-msg-reg",
-                                "min", String.valueOf(plugin.cfg().minPassword()),
-                                "timeout", String.valueOf(total));
-                    } else {
-                        plugin.messages().chatList(pp, "join-msg-login",
-                                "player", cur.nickname,
-                                "timeout", String.valueOf(total));
-                    }
-                    plugin.showAuthUi(cur);
-                    Visual.title(pp,
-                            plugin.messages().raw(cur.needReg ? "join-title-reg" : "join-title-login"),
-                            plugin.messages().raw(cur.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
-                } catch (Throwable t) {
-                    plugin.getLogger().warning("ElytrixAuth: отложенный UI не показан: " + t);
-                }
-            });
+            scheduleJoinUi(uuid, sess, needReg, dropped, total, 2500, 5);
         }
         long ms = (System.nanoTime() - t0) / 1_000_000;
         plugin.getLogger().info("ElytrixAuth: ServerConnected обработан за " + ms + " мс");
+    }
+
+    /**
+     * Отложенный показ первого UI (приветствие в чат + боссбар + title).
+     * Ждёт, пока у игрока реально появится сервер (getServer() != null) —
+     * пакеты клиенту до этого момента могут рвать соединение. Если сервера
+     * всё ещё нет — повторяет попытку (до maxTries раз).
+     */
+    private void scheduleJoinUi(final UUID uuid, final AuthSession sess,
+                                final boolean needReg, final boolean dropped,
+                                final int total, long delayMs, int maxTries) {
+        plugin.runLater(delayMs, () -> {
+            try {
+                AuthSession cur = plugin.session(uuid);
+                if (cur != sess || cur.joinUiShown) {
+                    return; // сессия сменилась / UI уже показан
+                }
+                ProxiedPlayer pp = plugin.proxy().getPlayer(uuid);
+                if (pp == null || !pp.isConnected() || cur.isAuthed()) {
+                    return;
+                }
+                if (pp.getServer() == null) {
+                    // сервер ещё не назначен — пробуем позже (если есть попытки)
+                    if (maxTries > 0) {
+                        plugin.getLogger().info("ElytrixAuth: сервер для " + pp.getName()
+                                + " ещё не назначен, UI отложен ещё раз");
+                        scheduleJoinUi(uuid, sess, needReg, dropped, total, 1500, maxTries - 1);
+                    } else {
+                        cur.uiPending = false;
+                    }
+                    return;
+                }
+                cur.joinUiShown = true;
+                cur.uiPending = false;
+                if (dropped) {
+                    plugin.messages().chatList(pp, "session-ip-changed");
+                }
+                if (needReg) {
+                    plugin.messages().chatList(pp, "join-msg-reg",
+                            "min", String.valueOf(plugin.cfg().minPassword()),
+                            "timeout", String.valueOf(total));
+                } else {
+                    plugin.messages().chatList(pp, "join-msg-login",
+                            "player", cur.nickname,
+                            "timeout", String.valueOf(total));
+                }
+                plugin.showAuthUi(cur);
+                Visual.title(pp,
+                        plugin.messages().raw(cur.needReg ? "join-title-reg" : "join-title-login"),
+                        plugin.messages().raw(cur.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
+            } catch (Throwable t) {
+                plugin.getLogger().warning("ElytrixAuth: отложенный UI не показан: " + t);
+            }
+        });
     }
 
     @EventHandler
@@ -387,7 +411,19 @@ public final class ElytrixAuthListener implements Listener {
 
     @EventHandler
     public void onDisconnect(PlayerDisconnectEvent e) {
-        plugin.leave(e.getPlayer().getUniqueId());
+        ProxiedPlayer p = e.getPlayer();
+        AuthSession s = plugin.session(p.getUniqueId());
+        // диагностика: если игрок отвалился сразу после подключения, это видно здесь
+        if (s != null) {
+            String srv = p.getServer() != null && p.getServer().getInfo() != null
+                    ? p.getServer().getInfo().getName() : "?";
+            long since = s.joinedServerAt == 0 ? -1
+                    : System.currentTimeMillis() - s.joinedServerAt;
+            plugin.getLogger().info("ElytrixAuth: отключился " + p.getName()
+                    + " (сервер=" + srv + ", state=" + s.state
+                    + ", на сервере был " + since + " мс, UI=" + s.joinUiShown + ")");
+        }
+        plugin.leave(p.getUniqueId());
     }
 
     private static String commandName(String message) {
