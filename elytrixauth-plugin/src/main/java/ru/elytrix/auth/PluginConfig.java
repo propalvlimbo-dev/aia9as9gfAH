@@ -111,6 +111,10 @@ public final class PluginConfig {
     }
 
     public String authServer()   { return get("auth.server", "auth"); }
+    /** Принудительно вести неавторизованных на auth.server (ServerConnectEvent).
+     *  Если прокси сам маршрутизирует на auth (капча NullCordX/FlameCord) -
+     *  ставить false, чтобы два редиректа не дрались и не рвали коннект. */
+    public boolean authForceServer() { return getBool("auth.force.server", false); }
     public String targetServer() { return get("target.server", "grief"); }
 
     /** Путь к файлу встроенной БД (HSQLDB). Относительный — от папки плагина. */

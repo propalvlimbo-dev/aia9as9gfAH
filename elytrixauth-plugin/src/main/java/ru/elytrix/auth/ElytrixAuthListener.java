@@ -288,12 +288,19 @@ public final class ElytrixAuthListener implements Listener {
             // и сообщения «Подключение к этому серверу уже выполняется».
             return;
         }
+        // Если прокси сам ведёт неавторизованных на auth (капча NullCordX/FlameCord,
+        // default_server = auth) — редирект здесь выключен (auth.force.server=false),
+        // чтобы наши два редиректа не дрались и не рвали коннект при входе.
+        if (!plugin.cfg().authForceServer()) {
+            return;
+        }
         // неавторизованный: разрешаем только auth-сервер
         ServerInfo target = e.getTarget();
         ServerInfo auth = plugin.authServerInfo();
         if (auth == null) {
+            // auth не найден по имени — НЕ отменяем коннект (иначе игрок получит
+            // «Сервер выключился»): логируем и пускаем как есть (разберётся прокси)
             plugin.logAuthServerMissing();
-            e.setCancelled(true);
             return;
         }
         if (target == null || !target.getName().equalsIgnoreCase(auth.getName())) {
