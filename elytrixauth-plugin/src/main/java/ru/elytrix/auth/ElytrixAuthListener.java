@@ -18,6 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Защита соединений: держим неавторизованных на auth-сервере, режем чат и
@@ -45,6 +46,7 @@ public final class ElytrixAuthListener implements Listener {
         ProxiedPlayer p = e.getPlayer();
         String ip = p.getAddress() == null ? "?" : p.getAddress().getHostString();
         long now = ElytrixAuthPlugin.now();
+        plugin.getLogger().info("ElytrixAuth: PostLogin " + p.getName() + " ip=" + ip);
 
         // временный бан IP (перебор пароля): не пускаем даже с активной сессией.
         // Кик с задержкой: мгновенный разрыв в PostLogin (клиент ещё в фазе LOGIN,
@@ -128,16 +130,21 @@ public final class ElytrixAuthListener implements Listener {
 
     /** Активная сессия → пускаем без пароля (состояние/БД, без пакетов игроку). */
     private void autoLogin(ProxiedPlayer p, AuthSession s, Database.PlayerRow row, String ip) {
+        plugin.getLogger().info("ElytrixAuth: автовход по сессии " + p.getName() + " (ip=" + ip + ")");
         // авто-вход — тоже «вход в аккаунт»: пишем историю, шлём уведомление в TG
-        // (уважает настройку «Уведомления»)
+        // (уважает настройку «Уведомления»). onSuccessfulLogin уже работает в фоне.
         plugin.onSuccessfulLogin(row, ip);
         plugin.markAuthed(s); // визуал внутри markAuthed сам отключится — сервера ещё нет
-        long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
-        try {
-            plugin.db().updateSession(row.uuid, ip, expires);
-        } catch (Exception ex) {
-            plugin.getLogger().warning("updateSession(auto) error: " + ex.getMessage());
-        }
+        final UUID uuid = row.uuid;
+        final String addr = ip;
+        final long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
+        plugin.runAsync(() -> {
+            try {
+                plugin.db().updateSession(uuid, addr, expires);
+            } catch (Exception ex) {
+                plugin.getLogger().warning("updateSession(auto) error: " + ex.getMessage());
+            }
+        });
         // перевод на target произойдёт в ServerConnect/ServerConnected,
         // чтобы игрок не «мелькал» на auth-карте
     }
@@ -150,9 +157,14 @@ public final class ElytrixAuthListener implements Listener {
      *  всё же занесло на auth — переводим на target. */
     @EventHandler
     public void onServerConnected(ServerConnectedEvent e) {
+        long t0 = System.nanoTime();
         ProxiedPlayer p = e.getPlayer();
         AuthSession s = plugin.session(p.getUniqueId());
+        String serverName = p.getServer() != null && p.getServer().getInfo() != null
+                ? p.getServer().getInfo().getName() : "?";
         if (s == null) {
+            plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()
+                    + " -> " + serverName + " (нет сессии, пропуск)");
             return;
         }
         s.joinedServerAt = System.currentTimeMillis();
@@ -160,6 +172,8 @@ public final class ElytrixAuthListener implements Listener {
             // авто-вход по сессии (или заход на след. сервер после /login).
             // «Добро пожаловать» в actionbar покажет scheduleWelcome — через 2 сек
             // ПОСЛЕ перевода в игровой мир (target), а не на auth.
+            plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()
+                    + " -> " + serverName + " (авторизован, UI=" + s.joinUiShown + ")");
             if (!s.joinUiShown) {
                 s.joinUiShown = true;
                 plugin.messages().chatList(p, "auto-login", "player", s.nickname);
@@ -168,6 +182,9 @@ public final class ElytrixAuthListener implements Listener {
             plugin.ensureNotAuth(p);
             return;
         }
+        plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()
+                + " -> " + serverName + " (не авторизован, needReg=" + s.needReg
+                + ", UI=" + s.joinUiShown + ")");
         if (!s.joinUiShown) {
             // первое приземление (на auth): приветствие в зависимости от ситуации
             s.joinUiShown = true;
@@ -188,6 +205,8 @@ public final class ElytrixAuthListener implements Listener {
         Visual.title(p,
                 plugin.messages().raw(s.needReg ? "join-title-reg" : "join-title-login"),
                 plugin.messages().raw(s.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        plugin.getLogger().info("ElytrixAuth: ServerConnected обработан за " + ms + " мс");
     }
 
     @EventHandler

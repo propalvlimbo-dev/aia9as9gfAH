@@ -542,6 +542,22 @@ public final class Database {
         }
     }
 
+    /** Всего аккаунтов в базе (диагностика: какая БД реально открыта). */
+    public long countPlayers() {
+        try {
+            return withConn(c -> {
+                try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(*) FROM players")) {
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? rs.getLong(1) : 0L;
+                    }
+                }
+            });
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "countPlayers error", e);
+            return -1L;
+        }
+    }
+
     /** Включить/выключить 2FA (кнопка подтверждения входа в Telegram). */
     public void setTg2fa(UUID uuid, boolean on) throws SQLException {
         withConn(c -> {

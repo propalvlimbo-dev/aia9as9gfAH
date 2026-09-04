@@ -76,6 +76,14 @@ public final class ElytrixAuthPlugin extends Plugin {
             getLogger().log(Level.SEVERE, "Не удалось инициализировать встроенную БД: " + e.getMessage(), e);
             return;
         }
+        // диагностика: реальный путь файла БД и число аккаунтов (какая БД открыта)
+        try {
+            long n = db.countPlayers();
+            getLogger().info("ElytrixAuth: файл БД = " + new File(dataFolder, cfg.dbFile())
+                    + ".log, аккаунтов в базе: " + n);
+        } catch (Throwable t) {
+            getLogger().warning("ElytrixAuth: не удалось посчитать аккаунтов: " + t);
+        }
 
         executor = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "elytrixauth");
@@ -276,10 +284,20 @@ public final class ElytrixAuthPlugin extends Plugin {
         if (p == null || executor == null || executor.isShutdown()) {
             return;
         }
+        final String nick = p.getName();
+        getLogger().info("ElytrixAuth: запланирован кик " + nick + " через " + delayMs
+                + " мс, причина: " + key);
         try {
             executor.schedule(() -> {
-                if (p.isConnected()) {
-                    messages().kick(p, key, args);
+                try {
+                    if (p.isConnected()) {
+                        getLogger().info("ElytrixAuth: кик " + nick + " (причина: " + key + ")");
+                        messages().kick(p, key, args);
+                    } else {
+                        getLogger().info("ElytrixAuth: кик " + nick + " отменён (уже отключён), причина: " + key);
+                    }
+                } catch (Throwable t) {
+                    getLogger().warning("ElytrixAuth: ошибка кика " + nick + ": " + t);
                 }
             }, delayMs, TimeUnit.MILLISECONDS);
         } catch (Throwable ignored) {
@@ -604,17 +622,24 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
     }
 
-    /** Успешный вход: пишем в историю входов и, если нужно, шлём уведомление в TG. */
+    /** Успешный вход: пишем в историю входов и, если нужно, шлём уведомление в TG.
+     *  Работает в фоне (runAsync): вызывается из потока событий прокси, а запись
+     *  в БД на главном потоке тормозит вход (варнинг «listener took Nms» и риск
+     *  таймаута соединения на слабом VDS). */
     public void onSuccessfulLogin(Database.PlayerRow row, String ip) {
         if (row == null) {
             return;
         }
-        try {
-            db.recordLogin(row.uuid, ip, now());
-        } catch (SQLException e) {
-            getLogger().warning("recordLogin error: " + e.getMessage());
-        }
-        notifyTgLogin(row, ip);
+        final Database.PlayerRow r = row;
+        final String addr = ip;
+        runAsync(() -> {
+            try {
+                db.recordLogin(r.uuid, addr, now());
+            } catch (SQLException e) {
+                getLogger().warning("recordLogin error: " + e.getMessage());
+            }
+            notifyTgLogin(r, addr);
+        });
     }
 
     /**
