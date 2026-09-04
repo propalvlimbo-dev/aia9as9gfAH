@@ -1,26 +1,43 @@
-"""ElytrixBot: Telegram-бот привязки аккаунтов Elytrix.
+"""ElytrixBot: Telegram-бот Elytrix (панель управления аккаунтом).
 
 Бот общается с плагином ElytrixAuth по HTTP API (см. api.py):
 
   /addtg в игре -> код -> боту /link <код> -> POST /api/link
-  после привязки внизу чата появляется REPLY-КЛАВИАТУРА («панель»), которая
-  видна всегда над полем ввода:
-    ⛏ Кикнуть            — кикнуть игрока с сервера и сбросить его сессию
-    🔐/🔓 2FA (переключатель) — 2FA по умолчанию выключена:
-        выкл: при входе аккаунта бот шлёт только сообщение о входе;
-        вкл:  при входе (после пароля) — inline «Войти / Отклонить».
-    🔑 Сменить пароль    — новый пароль отправляется обычным сообщением
-  клавиатура пересоздаётся по /menu и после каждого действия.
-  Один Telegram = один аккаунт (кнопки действуют на него).
 
-  2FA-вход (вкл): плагин создаёт login_request -> бот GET /api/pending ->
-  inline «Войти / Отклонить» -> POST /api/resolve.
-  Уведомления о входах (2FA выкл): сообщение + inline «⛏ Кикнуть».
+  После привязки внизу чата появляется reply-клавиатура — «главная страница»
+  с тремя разделами (папками), видны всегда над полем ввода:
+
+    🛡️ Безопасность
+        • Сменить пароль            (новый пароль — обычным сообщением)
+        • Включить/Выключить 2FA    (кнопка «Войти/Отклонить» при входе)
+        • Кикнуть с сервера         (кик + сброс сессии)
+        • Завершить все сессии      (выход со всех устройств/сессий)
+        • История входов            (последние 10 входов: IP + время)
+        • Заморозить/Разморозить    (экстренный запрет входа в 1 клик)
+        • Уведомления               (вкл/выкл оповещений о входе в TG)
+    🎮 Игровой процесс
+        • Профиль и статистика      (донат/время/коины — скоро)
+        • Активные ивенты           (заглушка; доступно с привилегией Elder)
+        • История наказаний         (заглушка, свой плагин)
+        • Поддержка                 (@Elytrix_Help)
+        • Правила                   (elytrix.pw)
+    🎁 Награды и бонусы
+        • Ежедневный бонус          (заглушка — ElytrixFree)
+        • Промокоды                 (заглушка — ElytrixFree)
+        • Канал Elytrix             (подписка обязательна для наград)
+
+  Входы и уведомления:
+    2FA вкл:  плагин создаёт login_request -> inline «Войти / Отклонить».
+    2FA выкл: сообщение «Вход в аккаунт» (ник/IP/время) + inline «⛏ Кикнуть».
+
+  Один Telegram = один аккаунт.
 """
 import asyncio
 import html
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -45,22 +62,56 @@ api = ElytrixApi(CFG.API_BASE, CFG.API_KEY)
 bot = Bot(token=CFG.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
+TZ = ZoneInfo("Europe/Moscow")
+
 # id запросов входа, которым уже отправили кнопку (чтобы не дублировать)
 _sent: set[int] = set()
 
-# ---- reply-клавиатура («панель» внизу чата) ----
-LABEL_KICK = "⛏ Кикнуть"
-LABEL_2FA_ON = "🔐 Включить 2FA"
-LABEL_2FA_OFF = "🔓 Выключить 2FA"
-LABEL_PW = "🔑 Сменить пароль"
-LABEL_SET = {LABEL_KICK, LABEL_2FA_ON, LABEL_2FA_OFF, LABEL_PW}
+# ------------------------------------------------------------------ разделы (папки)
 
-# Ожидание нового пароля (смена пароля кнопкой «Сменить пароль»):
-# {tg_id: {"nickname": str, "until": epoch_sec}}
+LB_SEC = "🛡️ Безопасность"
+LB_GAME = "🎮 Игровой процесс"
+LB_REW = "🎁 Награды и бонусы"
+LB_BACK = "⬅️ Главная"
+
+# Безопасность
+LB_KICK = "⛏ Кикнуть с сервера"
+LB_KICK_OLD = "⛏ Кикнуть"            # старая подпись — тоже принимаем
+LB_PW = "🔑 Сменить пароль"
+LB_2FA_ON = "🔐 Включить 2FA"
+LB_2FA_OFF = "🔓 Выключить 2FA"
+LB_SESS = "🚪 Завершить все сессии"
+LB_HIST = "📜 История входов"
+LB_FREEZE = "🧊 Заморозить аккаунт"
+LB_UNFREEZE = "🔥 Разморозить аккаунт"
+LB_NOTIF_ON = "🔔 Включить уведомления"
+LB_NOTIF_OFF = "🔕 Выключить уведомления"
+
+# Игровой процесс
+LB_PROFILE = "👤 Профиль и статистика"
+LB_EVENTS = "🎉 Активные ивенты"
+LB_PUNISH = "⚖️ История наказаний"
+LB_SUPPORT = "🆘 Поддержка"
+LB_RULES = "📋 Правила"
+
+# Награды и бонусы
+LB_DAILY = "🎁 Ежедневный бонус"
+LB_PROMO = "🏷️ Промокоды"
+LB_CHANNEL = "📢 Канал Elytrix"
+
+ALL_LABELS = {
+    LB_SEC, LB_GAME, LB_REW, LB_BACK,
+    LB_KICK, LB_KICK_OLD, LB_PW, LB_2FA_ON, LB_2FA_OFF, LB_SESS, LB_HIST,
+    LB_FREEZE, LB_UNFREEZE, LB_NOTIF_ON, LB_NOTIF_OFF,
+    LB_PROFILE, LB_EVENTS, LB_PUNISH, LB_SUPPORT, LB_RULES,
+    LB_DAILY, LB_PROMO, LB_CHANNEL,
+}
+
+# Ожидание нового пароля: {tg_id: {"nickname": str, "until": epoch}}
 _pending_pw: dict[int, dict] = {}
-PW_TTL_SEC = 300  # 5 минут на ввод пароля
+PW_TTL_SEC = 300
 
-# Коды ошибок смены пароля (плагин) -> человеческий текст
+# Коды ошибок (плагин) -> человеческий текст
 PW_ERR_TEXT = {
     "too_short": "слишком короткий",
     "too_long": "слишком длинный (больше 64 символов)",
@@ -69,8 +120,6 @@ PW_ERR_TEXT = {
     "player_not_found": "аккаунт не найден на сервере",
     "not_yours": "аккаунт больше не привязан к этому Telegram",
 }
-
-# Коды ошибок привязки (плагин) -> человеческий текст
 LINK_ERR_TEXT = {
     "invalid_or_expired_code": "Код не найден или уже использован.\n"
                                "Запусти /addtg в игре ещё раз — придёт новый код.",
@@ -85,91 +134,193 @@ def esc(v) -> str:
     return html.escape(str(v), quote=False)
 
 
-async def get_accounts_or_alert(chat_id: int, answer_cb=None) -> list | None:
-    """Аккаунты пользователя. None, если сервер недоступен (алерт при наличии answer_cb)."""
+def fmt_ts(ts) -> str:
+    try:
+        return datetime.fromtimestamp(int(ts), tz=TZ).strftime("%d.%m.%y %H:%M")
+    except Exception:
+        return "—"
+
+
+async def get_accounts(chat_id: int) -> list | None:
+    """Аккаунты пользователя. None — сервер недоступен."""
     try:
         return await api.accounts(chat_id)
     except ApiError as e:
         log.warning("accounts error: %s", e)
-        if answer_cb is not None:
-            await answer_cb("⚠️ Сервер недоступен. Попробуй ещё раз.", show_alert=True)
         return None
 
 
-def panel_text(accounts: list, result: str | None = None) -> str:
-    lines = ["🎮 <b>Панель управления Elytrix</b>", ""]
-    if not accounts:
-        lines.append("К этому Telegram не привязан ни один аккаунт.")
-        lines.append("")
-        lines.append("Зайди на сервер, напиши в игре <code>/addtg</code> и отправь мне код: "
-                     "<code>/link &lt;код&gt;</code>")
-        lines.append("")
-        lines.append("После привязки здесь появится статус аккаунта.")
-    else:
-        for a in accounts:
-            where = "в игре" if a["online"] else "не в игре"
-            twofa = "2FA вкл" if a["tg2fa"] else "2FA выкл"
-            lines.append(f"• <b>{esc(a['nickname'])}</b> — {where} · {twofa}")
-        lines.append("")
-        if len(accounts) == 1:
-            lines.append("Кнопки внизу чата — управление аккаунтом.")
-        else:
-            lines.append("Кнопки внизу чата управляют аккаунтами выше. "
-                         "Новая привязка — один Telegram = один аккаунт.")
-    if result:
-        lines.append("")
-        lines.append(result)
-    return "\n".join(lines)
+def acc_lines(acc: dict) -> list[str]:
+    where = "в игре" if acc["online"] else "не в игре"
+    twofa = "включена" if acc["tg2fa"] else "выключена"
+    notify = "включены" if acc["notify"] else "выключены"
+    frozen = "АКТИВНА" if acc["frozen"] else "нет"
+    return [
+        f"┃ Аккаунт: <b>{esc(acc['nickname'])}</b>",
+        f"┃ ● Статус: {where}",
+        f"┃ ● 2FA: {twofa}",
+        f"┃ ● Уведомления о входах: {notify}",
+        f"┃ ● Заморозка: {frozen}",
+    ]
 
 
-def reply_kb(accounts: list) -> ReplyKeyboardMarkup | None:
-    """Клавиатура-«панель». None, если аккаунтов нет (клавиатуру надо убрать)."""
-    if not accounts:
-        return None
-    # 1 TG = 1 аккаунт: кнопки действуют на единственный аккаунт.
-    # (для старых записей с несколькими аккаунтами действия объяснят отдельно)
-    toggle = LABEL_2FA_OFF if accounts[0]["tg2fa"] else LABEL_2FA_ON
+def no_account_text() -> str:
+    return ("☁ <b>ᴇʟʏᴛʀɪx</b>\n\n"
+            "┃ К этому Telegram не привязан ни один аккаунт.\n"
+            "┃ ● Зайди на сервер и напиши в игре <code>/addtg</code>\n"
+            "┃ ● Полученный код отправь сюда: <code>/link &lt;код&gt;</code>\n\n"
+            "После привязки здесь появится панель управления.")
+
+
+# ------------------------------------------------------------------ клавиатуры
+
+def kb_main() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=LABEL_KICK)],
-            [KeyboardButton(text=toggle)],
-            [KeyboardButton(text=LABEL_PW)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Панель Elytrix",
-    )
+        keyboard=[[KeyboardButton(text=LB_SEC)],
+                  [KeyboardButton(text=LB_GAME)],
+                  [KeyboardButton(text=LB_REW)]],
+        resize_keyboard=True, is_persistent=True,
+        input_field_placeholder="Панель Elytrix")
 
 
-async def send_panel(chat_id: int, result: str | None = None) -> None:
-    """Статус + клавиатура-«панель» (или её убрать, если аккаунтов нет)."""
-    accounts = await get_accounts_or_alert(chat_id)
+def kb_security(acc: dict) -> ReplyKeyboardMarkup:
+    twofa = LB_2FA_OFF if acc["tg2fa"] else LB_2FA_ON
+    frozen = LB_UNFREEZE if acc["frozen"] else LB_FREEZE
+    notif = LB_NOTIF_OFF if acc["notify"] else LB_NOTIF_ON
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=LB_KICK)],
+                  [KeyboardButton(text=LB_PW)],
+                  [KeyboardButton(text=twofa)],
+                  [KeyboardButton(text=LB_SESS)],
+                  [KeyboardButton(text=LB_HIST)],
+                  [KeyboardButton(text=frozen)],
+                  [KeyboardButton(text=notif)],
+                  [KeyboardButton(text=LB_BACK)]],
+        resize_keyboard=True, is_persistent=True,
+        input_field_placeholder="Панель Elytrix — безопасность")
+
+
+def kb_game() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=LB_PROFILE)],
+                  [KeyboardButton(text=LB_EVENTS)],
+                  [KeyboardButton(text=LB_PUNISH)],
+                  [KeyboardButton(text=LB_SUPPORT)],
+                  [KeyboardButton(text=LB_RULES)],
+                  [KeyboardButton(text=LB_BACK)]],
+        resize_keyboard=True, is_persistent=True,
+        input_field_placeholder="Панель Elytrix — игровой процесс")
+
+
+def kb_rewards() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=LB_DAILY)],
+                  [KeyboardButton(text=LB_PROMO)],
+                  [KeyboardButton(text=LB_CHANNEL)],
+                  [KeyboardButton(text=LB_BACK)]],
+        resize_keyboard=True, is_persistent=True,
+        input_field_placeholder="Панель Elytrix — награды")
+
+
+# ------------------------------------------------------------------ отправка экранов
+
+async def fetch_single(chat_id: int) -> tuple[dict | None, list | None]:
+    """(аккаунт, None) если ровно один; (None, accounts) иначе (пусто/много/None-ошибка)."""
+    accounts = await get_accounts(chat_id)
     if accounts is None:
+        return None, None
+    if len(accounts) == 1:
+        return accounts[0], None
+    return None, accounts
+
+
+async def send_no_link(chat_id: int) -> None:
+    await bot.send_message(chat_id, no_account_text(), reply_markup=ReplyKeyboardRemove())
+
+
+async def send_legacy_multi(chat_id: int) -> None:
+    await bot.send_message(
+        chat_id,
+        "☁ <b>ᴇʟʏᴛʀɪx</b>\n\n"
+        "┃ У тебя привязано несколько аккаунтов (старая версия).\n"
+        "┃ Сейчас действует правило: <b>один Telegram — один аккаунт</b>.\n"
+        "┃ ● Напиши администратору, какой аккаунт оставить — лишние снимут.",
+        reply_markup=ReplyKeyboardRemove())
+
+
+async def send_main(chat_id: int, result: str | None = None) -> None:
+    accounts = await get_accounts(chat_id)
+    if accounts is None:
+        await bot.send_message(chat_id, "⚠️ Сервер недоступен. Попробуй ещё раз.")
         return
-    text = panel_text(accounts, result)
-    kb = reply_kb(accounts)
-    if kb is None:
-        await bot.send_message(chat_id, text, reply_markup=ReplyKeyboardRemove())
-    else:
-        await bot.send_message(chat_id, text, reply_markup=kb)
-
-
-async def only_account(m: Message) -> dict | None:
-    """Единственный аккаунт пользователя (reply-кнопки без выбора). None — уже ответили."""
-    accounts = await get_accounts_or_alert(m.chat.id)
-    if accounts is None:
-        return None
     if not accounts:
-        await m.answer("К этому Telegram не привязан ни один аккаунт.\n"
-                       "Зайди на сервер, сделай <code>/addtg</code> и пришли код: "
-                       "<code>/link &lt;код&gt;</code>")
-        return None
+        await send_no_link(chat_id)
+        return
     if len(accounts) > 1:
-        await m.answer("У тебя привязано несколько аккаунтов (старая версия). "
-                       "Сейчас действует правило «один Telegram — один аккаунт».\n"
-                       "Напиши администратору, какой аккаунт оставить, — он снимет лишние.")
-        return None
-    return accounts[0]
+        await send_legacy_multi(chat_id)
+        return
+    acc = accounts[0]
+    lines = ["☁ <b>ᴇʟʏᴛʀɪx</b> — панель управления", ""]
+    lines += acc_lines(acc)
+    lines += ["", "Выбери раздел кнопками внизу чата:"]
+    if result:
+        lines += ["", result]
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_main())
+
+
+async def send_security(chat_id: int, result: str | None = None) -> None:
+    acc, rest = await fetch_single(chat_id)
+    if acc is None:
+        if rest is None:
+            await bot.send_message(chat_id, "⚠️ Сервер недоступен. Попробуй ещё раз.")
+        elif not rest:
+            await send_no_link(chat_id)
+        else:
+            await send_legacy_multi(chat_id)
+        return
+    lines = ["🛡️ <b>Безопасность</b>", ""]
+    lines += acc_lines(acc)
+    lines += ["", "Кнопки внизу чата:"]
+    if result:
+        lines += ["", result]
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_security(acc))
+
+
+async def send_game(chat_id: int, result: str | None = None) -> None:
+    acc, rest = await fetch_single(chat_id)
+    if acc is None:
+        if rest is None:
+            await bot.send_message(chat_id, "⚠️ Сервер недоступен. Попробуй ещё раз.")
+        elif not rest:
+            await send_no_link(chat_id)
+        else:
+            await send_legacy_multi(chat_id)
+        return
+    lines = ["🎮 <b>Игровой процесс</b>", "",
+             f"┃ Аккаунт: <b>{esc(acc['nickname'])}</b>",
+             "", "Кнопки внизу чата:"]
+    if result:
+        lines += ["", result]
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_game())
+
+
+async def send_rewards(chat_id: int, result: str | None = None) -> None:
+    acc, rest = await fetch_single(chat_id)
+    if acc is None:
+        if rest is None:
+            await bot.send_message(chat_id, "⚠️ Сервер недоступен. Попробуй ещё раз.")
+        elif not rest:
+            await send_no_link(chat_id)
+        else:
+            await send_legacy_multi(chat_id)
+        return
+    lines = ["🎁 <b>Награды и бонусы</b>", "",
+             "┃ Ежедневные награды и промокоды заработают вместе с системой ElytrixFree.",
+             "┃ ● <b>Подписка на канал обязательна</b> — без неё бонусы не выдаются.",
+             "┃ Канал: t.me/elytrix_ru", "", "Кнопки внизу чата:"]
+    if result:
+        lines += ["", result]
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_rewards())
 
 
 def drop_pending_pw(tg_id: int) -> None:
@@ -187,22 +338,26 @@ async def cmd_start(m: Message) -> None:
         "👋 <b>Elytrix</b> — привязка Minecraft-аккаунта к Telegram.\n\n"
         "1) Зайди на сервер и напиши в игре <code>/addtg</code>\n"
         "2) Ты получишь код — отправь его мне: <code>/link &lt;код&gt;</code>\n\n"
-        "После привязки внизу чата появятся кнопки панели: кик, 2FA и смена пароля. "
-        "Они видны всегда — это и есть управление аккаунтом."
+        "После привязки внизу чата появится панель управления: "
+        "🛡️ Безопасность · 🎮 Игровой процесс · 🎁 Награды и бонусы."
     )
-    await send_panel(m.chat.id)
+    await send_main(m.chat.id)
 
 
 @dp.message(Command("help"))
 async def cmd_help(m: Message) -> None:
-    await cmd_start(m)
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    await send_main(m.chat.id)
 
 
 @dp.message(Command("menu"))
 async def cmd_menu(m: Message) -> None:
-    if m.from_user is not None:
-        drop_pending_pw(m.from_user.id)
-    await send_panel(m.chat.id)
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    await send_main(m.chat.id)
 
 
 @dp.message(Command("link"))
@@ -227,45 +382,34 @@ async def cmd_link(m: Message) -> None:
         return
     await m.answer(
         f"✅ Аккаунт <b>{esc(nickname)}</b> привязан к твоему Telegram!\n\n"
-        "2FA по умолчанию выключена: при входе аккаунта я пришлю уведомление. "
-        "Включить подтверждение входа можно кнопкой внизу.\n"
-        "Если это не твой аккаунт — напиши администратору."
+        "┃ ● 2FA по умолчанию выключена — при входе пришлю уведомление.\n"
+        "┃ ● Включить 2FA, кик, смену пароля и другое можно кнопками панели внизу.\n"
+        "┃ ● Если это не твой аккаунт — напиши администратору."
     )
-    await send_panel(m.chat.id)
+    await send_main(m.chat.id)
 
 
 @dp.message(Command("unlink"))
 async def cmd_unlink(m: Message) -> None:
-    if m.from_user is not None:
-        drop_pending_pw(m.from_user.id)
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
     await m.answer(
-        "🔓 Полная отвязка аккаунта от Telegram пока делается на сервере.\n"
+        "🔓 Отвязка аккаунта от Telegram пока делается на сервере.\n"
         "Напиши администратору ник — он снимет привязку вручную."
     )
 
 
-# ------------------------------------------------------------------ reply-клавиатура (панель)
+# ------------------------------------------------------------------ меню (reply-кнопки)
 
-async def _kick_result(nick: str, data: dict) -> str:
-    if data.get("ok"):
-        if data.get("online"):
-            return (f"✅ <b>{esc(nick)}</b> кикнут с сервера. "
-                    f"Сессия сброшена — следующий вход будет по паролю.")
-        return (f"⛏ <b>{esc(nick)}</b> сейчас не в игре. "
-                f"Сессия сброшена — при следующем входе понадобится пароль.")
-    err = data.get("error")
-    if err in ("not_yours", "player_not_found"):
-        return f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram."
-    log.warning("kick reply error: %s", err)
-    return "⚠️ Не получилось. Попробуй ещё раз."
-
-
-@dp.message(F.text == LABEL_KICK)
-async def on_reply_kick(m: Message) -> None:
-    if m.from_user is not None:
-        drop_pending_pw(m.from_user.id)
-    acc = await only_account(m)
+async def kick_action(m: Message, phrase_online: str, phrase_offline: str) -> None:
+    """Общий кик: игрок онлайн — фраза phrase_online, офлайн — phrase_offline."""
+    if m.from_user is None:
+        return
+    acc, rest = await fetch_single(m.chat.id)
     if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
         return
     nick = acc["nickname"]
     try:
@@ -274,23 +418,63 @@ async def on_reply_kick(m: Message) -> None:
         log.warning("kick error: %s", e)
         await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
         return
-    await send_panel(m.chat.id, await _kick_result(nick, data))
+    if not data.get("ok"):
+        err = data.get("error")
+        if err in ("not_yours", "player_not_found"):
+            await send_security(m.chat.id, f"❌ <b>{esc(nick)}</b> больше не привязан "
+                                           f"к этому Telegram.")
+            return
+        log.warning("kick error: %s", err)
+        await m.answer("⚠️ Не получилось. Попробуй ещё раз.")
+        return
+    result = phrase_online if data.get("online") else phrase_offline
+    await send_security(m.chat.id, result)
 
 
-@dp.message(F.text.in_({LABEL_2FA_ON, LABEL_2FA_OFF}))
-async def on_reply_2fa(m: Message) -> None:
+@dp.message(F.text == LB_KICK)
+async def on_kick(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await kick_action(m,
+                      f"✅ <b>Кик выполнен.</b> Игрок выгнан с сервера, сессия сброшена — "
+                      f"следующий вход по паролю.",
+                      f"⛏ Игрок сейчас не в игре. Сессия сброшена — при следующем входе "
+                      f"понадобится пароль.")
+
+
+# старая подпись кнопки (прошлые версии бота) — работает так же
+@dp.message(F.text == LB_KICK_OLD)
+async def on_kick_old(m: Message) -> None:
+    await on_kick(m)
+
+
+@dp.message(F.text == LB_SESS)
+async def on_end_sessions(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await kick_action(m,
+                      f"✅ <b>Все сессии завершены.</b> Игрок выведен из игры. "
+                      f"Следующий вход — по паролю.",
+                      f"✅ <b>Все сессии завершены.</b> Игрок был не в игре. "
+                      f"Следующий вход — по паролю.")
+
+
+@dp.message(F.text.in_({LB_2FA_ON, LB_2FA_OFF}))
+async def on_toggle_2fa(m: Message) -> None:
     if m.from_user is None:
         return
     drop_pending_pw(m.from_user.id)
-    acc = await only_account(m)
+    acc, rest = await fetch_single(m.chat.id)
     if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
         return
-    want_on = m.text == LABEL_2FA_ON
+    want_on = m.text == LB_2FA_ON
     nick = acc["nickname"]
     if acc["tg2fa"] == want_on:
-        # состояние уже такое (клавиатура могла устареть) — просто показываем статус
-        await send_panel(m.chat.id, f"ℹ️ 2FA для <b>{esc(nick)}</b> уже "
-                                    f"{'включена' if want_on else 'выключена'}.")
+        await send_security(m.chat.id,
+                            f"ℹ️ 2FA для <b>{esc(nick)}</b> уже "
+                            f"{'включена' if want_on else 'выключена'}.")
         return
     try:
         data = await api.toggle2fa(nick, m.from_user.id)
@@ -301,40 +485,332 @@ async def on_reply_2fa(m: Message) -> None:
     if not data.get("ok"):
         err = data.get("error")
         if err in ("not_yours", "player_not_found"):
-            await send_panel(m.chat.id, f"❌ <b>{esc(nick)}</b> больше не привязан "
-                                        f"к этому Telegram.")
+            await send_security(m.chat.id,
+                                f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
             return
         log.warning("toggle2fa error: %s", err)
         await m.answer("⚠️ Не получилось. Попробуй ещё раз.")
         return
     if data.get("tg2fa"):
-        result = (f"🔐 2FA для <b>{esc(nick)}</b> включена. "
-                  f"Теперь при входе (после пароля) нужно будет подтвердить его здесь.")
+        result = (f"🔐 2FA для <b>{esc(nick)}</b> <b>включена</b>. Теперь при входе "
+                  f"(после пароля) нужно будет подтвердить вход кнопкой здесь.")
     else:
-        result = (f"🔓 2FA для <b>{esc(nick)}</b> выключена. "
-                  f"При входе буду присылать только уведомление.")
-    await send_panel(m.chat.id, result)
+        result = (f"🔓 2FA для <b>{esc(nick)}</b> <b>выключена</b>. При входе буду "
+                  f"присылать только уведомление.")
+    await send_security(m.chat.id, result)
 
 
-@dp.message(F.text == LABEL_PW)
-async def on_reply_change_password(m: Message) -> None:
+@dp.message(F.text == LB_PW)
+async def on_change_password(m: Message) -> None:
     if m.from_user is None:
         return
-    acc = await only_account(m)
+    acc, rest = await fetch_single(m.chat.id)
     if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
         return
     nick = acc["nickname"]
     _pending_pw[m.from_user.id] = {"nickname": nick, "until": time.time() + PW_TTL_SEC}
     await m.answer(
         f"🔑 Отправь <b>новый пароль</b> для аккаунта <b>{esc(nick)}</b> одним сообщением.\n\n"
-        "Пароль полностью заменит старый и понадобится при следующем входе в игру. "
-        "Отменить ввод можно командой <code>/menu</code>."
+        "┃ ● Старый пароль и все сессии сразу потеряют силу.\n"
+        "┃ ● Если игрок сейчас в игре — его выкинет (пусть заходит с новым паролем).\n"
+        "┃ ● Отменить ввод: <code>/menu</code> или любая кнопка меню."
     )
 
 
+@dp.message(F.text == LB_HIST)
+async def on_login_history(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    acc, rest = await fetch_single(m.chat.id)
+    if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
+        return
+    nick = acc["nickname"]
+    try:
+        rows = await api.logins(nick, m.from_user.id)
+    except ApiError as e:
+        log.warning("logins error: %s", e)
+        await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
+        return
+    lines = [f"📜 <b>История входов</b> — {esc(nick)}", ""]
+    if not rows:
+        lines.append("┃ Записей пока нет.")
+    else:
+        for r in rows:
+            ip = r.get("ip") or "?"
+            lines.append(f"┃ ● {fmt_ts(r.get('ts'))} — <code>{esc(ip)}</code>")
+        lines.append("")
+        lines.append("┃ Показаны последние 10 входов.")
+    await m.answer("\n".join(lines))
+
+
+@dp.message(F.text.in_({LB_FREEZE, LB_UNFREEZE}))
+async def on_freeze(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    acc, rest = await fetch_single(m.chat.id)
+    if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
+        return
+    want = m.text == LB_FREEZE
+    nick = acc["nickname"]
+    if acc["frozen"] == want:
+        await send_security(m.chat.id,
+                            f"ℹ️ Аккаунт <b>{esc(nick)}</b> уже "
+                            f"{'заморожен' if want else 'разморожен'}.")
+        return
+    try:
+        data = await api.freeze(nick, m.from_user.id, want)
+    except ApiError as e:
+        log.warning("freeze error: %s", e)
+        await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
+        return
+    if not data.get("ok"):
+        err = data.get("error")
+        if err in ("not_yours", "player_not_found"):
+            await send_security(m.chat.id,
+                                f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
+            return
+        log.warning("freeze error: %s", err)
+        await m.answer("⚠️ Не получилось. Попробуй ещё раз.")
+        return
+    if data.get("frozen"):
+        extra = (" Игрок кикнут с сервера." if data.get("kicked") else " Игрок был не в игре.")
+        result = (f"🧊 Аккаунт <b>{esc(nick)}</b> <b>заморожен</b> — вход запрещён до "
+                  f"разморозки.{extra}")
+    else:
+        result = f"🔥 Аккаунт <b>{esc(nick)}</b> <b>разморожен</b> — можно входить."
+    await send_security(m.chat.id, result)
+
+
+@dp.message(F.text.in_({LB_NOTIF_ON, LB_NOTIF_OFF}))
+async def on_notify(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    acc, rest = await fetch_single(m.chat.id)
+    if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
+        return
+    want = m.text == LB_NOTIF_ON
+    nick = acc["nickname"]
+    if acc["notify"] == want:
+        await send_security(m.chat.id,
+                            f"ℹ️ Уведомления для <b>{esc(nick)}</b> уже "
+                            f"{'включены' if want else 'выключены'}.")
+        return
+    try:
+        data = await api.notify(nick, m.from_user.id, want)
+    except ApiError as e:
+        log.warning("notify error: %s", e)
+        await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
+        return
+    if not data.get("ok"):
+        err = data.get("error")
+        if err in ("not_yours", "player_not_found"):
+            await send_security(m.chat.id,
+                                f"❌ <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
+            return
+        log.warning("notify error: %s", err)
+        await m.answer("⚠️ Не получилось. Попробуй ещё раз.")
+        return
+    if data.get("notify"):
+        result = (f"🔔 Уведомления о входах для <b>{esc(nick)}</b> <b>включены</b> — "
+                  f"буду сообщать о каждом входе в игру.")
+    else:
+        result = (f"🔕 Уведомления о входах для <b>{esc(nick)}</b> <b>выключены</b> — "
+                  f"сообщения о входах больше не приходят.")
+    await send_security(m.chat.id, result)
+
+
+@dp.message(F.text == LB_PROFILE)
+async def on_profile(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    acc, rest = await fetch_single(m.chat.id)
+    if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
+        return
+    nick = acc["nickname"]
+    where = "в игре" if acc["online"] else "не в игре"
+    await m.answer(
+        f"👤 <b>Профиль и статистика</b> — {esc(nick)}\n\n"
+        f"┃ ● Статус: {where}\n"
+        "┃ ● Донат (LuckPerms): раздел готовится\n"
+        "┃ ● Наигранное время: раздел готовится\n"
+        "┃ ● Коины (PlayerPoints): раздел готовится\n\n"
+        "Скоро здесь будет полная статистика по аккаунту."
+    )
+
+
+@dp.message(F.text == LB_EVENTS)
+async def on_events(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    acc, rest = await fetch_single(m.chat.id)
+    if acc is None:
+        if rest is not None and not rest:
+            await send_no_link(m.chat.id)
+        return
+    nick = acc["nickname"]
+    try:
+        data = await api.events(nick, m.from_user.id)
+    except ApiError as e:
+        log.warning("events error: %s", e)
+        await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
+        return
+    if not data.get("lp"):
+        await m.answer(
+            f"🎉 <b>Активные ивенты</b> — {esc(nick)}\n\n"
+            "┃ ● Проверка привилегии недоступна (LuckPerms не отвечает).\n"
+            "┃ ● Раздел доступен только игрокам с привилегией <b>Elder</b>.\n\n"
+            "Попробуй позже."
+        )
+        return
+    if data.get("elder"):
+        await m.answer(
+            f"🎉 <b>Активные ивенты</b> — {esc(nick)}\n\n"
+            "┃ ● Привилегия Elder подтверждена ✔\n"
+            "┃ ● Активных ивентов сейчас нет — раздел готовится."
+        )
+    else:
+        await m.answer(
+            f"🎉 <b>Активные ивенты</b> — {esc(nick)}\n\n"
+            "┃ ● Раздел доступен только игрокам с привилегией <b>Elder</b>.\n"
+            "┃ ● У тебя её пока нет — купить можно на сайте elytrix.pw"
+        )
+
+
+@dp.message(F.text == LB_PUNISH)
+async def on_punishments(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    await m.answer(
+        "⚖️ <b>История наказаний</b>\n\n"
+        "┃ ● Раздел подключим чуть позже — у Elytrix свой плагин наказаний.\n"
+        "┃ ● Здесь можно будет увидеть свои баны/муты/варны и их причины."
+    )
+
+
+@dp.message(F.text == LB_SUPPORT)
+async def on_support(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✉️ @Elytrix_Help", url="https://t.me/Elytrix_Help"),
+    ]])
+    await m.answer(
+        "🆘 <b>Поддержка</b>\n\n"
+        "┃ ● Создать тикет / связаться с админом — кнопка ниже.\n"
+        "┃ ● Отвечаем по мере возможности, не спамь, пожалуйста.",
+        reply_markup=kb)
+
+
+@dp.message(F.text == LB_RULES)
+async def on_rules(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🌐 Elytrix — правила и донат", url="https://elytrix.pw/"),
+    ]])
+    await m.answer(
+        "📋 <b>Правила сервера</b>\n\n"
+        "┃ ● Полная сводка правил и донат-магазин — на сайте (кнопка ниже).\n"
+        "┃ ● Незнание правил не освобождает от ответственности.",
+        reply_markup=kb)
+
+
+@dp.message(F.text == LB_DAILY)
+async def on_daily(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📢 Канал Elytrix", url="https://t.me/elytrix_ru"),
+    ]])
+    await m.answer(
+        "🎁 <b>Ежедневный бонус</b>\n\n"
+        "┃ ● Раздел появится вместе с системой ElytrixFree (её пока нет).\n"
+        "┃ ● Бонус выдаётся <b>только подписчикам канала</b> — подпишись (кнопка ниже), "
+        "чтобы не пропустить запуск.",
+        reply_markup=kb)
+
+
+@dp.message(F.text == LB_PROMO)
+async def on_promo(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📢 Канал Elytrix", url="https://t.me/elytrix_ru"),
+    ]])
+    await m.answer(
+        "🏷️ <b>Промокоды</b>\n\n"
+        "┃ ● Активация секретных кодов заработает вместе с ElytrixFree (пока заглушка).\n"
+        "┃ ● Коды будут выходить в канале — <b>подписка обязательна</b> (кнопка ниже).",
+        reply_markup=kb)
+
+
+@dp.message(F.text == LB_CHANNEL)
+async def on_channel(m: Message) -> None:
+    if m.from_user is None:
+        return
+    drop_pending_pw(m.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📢 Подписаться", url="https://t.me/elytrix_ru"),
+    ]])
+    await m.answer(
+        "📢 <b>Канал Elytrix</b>\n\n"
+        "┃ ● Новости, промокоды, ежедневные бонусы — t.me/elytrix_ru\n"
+        "┃ ● Подписка обязательна для раздела «Награды и бонусы».",
+        reply_markup=kb)
+
+
+# Переходы между разделами
+@dp.message(F.text == LB_SEC)
+async def open_security(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await send_security(m.chat.id)
+
+
+@dp.message(F.text == LB_GAME)
+async def open_game(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await send_game(m.chat.id)
+
+
+@dp.message(F.text == LB_REW)
+async def open_rewards(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await send_rewards(m.chat.id)
+
+
+@dp.message(F.text == LB_BACK)
+async def open_main(m: Message) -> None:
+    if m.from_user is not None:
+        drop_pending_pw(m.from_user.id)
+    await send_main(m.chat.id)
+
+
 # Любое другое текстовое сообщение: если ждём пароль — это он
-@dp.message(F.text & ~F.text.startswith("/") & ~F.text.in_(LABEL_SET))
-async def on_password_text(m: Message) -> None:
+@dp.message(F.text & ~F.text.startswith("/") & ~F.text.in_(ALL_LABELS))
+async def on_any_text(m: Message) -> None:
     if m.from_user is None:
         return
     st = _pending_pw.get(m.from_user.id)
@@ -347,27 +823,30 @@ async def on_password_text(m: Message) -> None:
         return
     password = m.text.strip()
     try:
-        ok, err = await api.change_password(nick, m.from_user.id, password)
+        data = await api.change_password(nick, m.from_user.id, password)
     except ApiError as e:
         log.warning("change password error: %s", e)
         await m.answer("⚠️ Сервер недоступен. Нажми «Сменить пароль» ещё раз.")
         drop_pending_pw(m.from_user.id)
         return
-    if ok:
+    if data.get("ok"):
         drop_pending_pw(m.from_user.id)
+        extra = (" Игрок был онлайн — его выкинуло с сервера."
+                 if data.get("kicked")
+                 else " Игрок был не в игре.")
         await m.answer(
             f"✅ Пароль аккаунта <b>{esc(nick)}</b> изменён.\n\n"
-            "Старый пароль больше не действует, сессия сброшена — "
-            "при следующем входе в игру используй новый пароль."
+            "┃ ● Старый пароль больше не действует, все сессии сброшены." + extra + "\n"
+            "┃ ● При следующем входе в игру используй новый пароль."
         )
+        await send_main(m.chat.id)
         return
+    err = str(data.get("error", "unknown"))
     if err in ("not_yours", "player_not_found"):
         drop_pending_pw(m.from_user.id)
-        await m.answer(f"❌ Аккаунт <b>{esc(nick)}</b> больше не привязан к этому Telegram.\n"
-                       f"Панель можно обновить командой <code>/menu</code>.")
-        await send_panel(m.chat.id)
+        await m.answer(f"❌ Аккаунт <b>{esc(nick)}</b> больше не привязан к этому Telegram.")
+        await send_main(m.chat.id)
         return
-    # ошибка правил пароля: код известен или нет — просим прислать другой
     reason = PW_ERR_TEXT.get(err, err or "не подходит")
     await m.answer(
         f"❌ Пароль для <b>{esc(nick)}</b> не принят ({reason}).\n"
@@ -375,16 +854,17 @@ async def on_password_text(m: Message) -> None:
     )
 
 
-# ------------------------------------------------------------------ inline: кик из уведомления, входы 2FA
+# ------------------------------------------------------------------ inline: входы и уведомления
 
 async def owned_account(cq: CallbackQuery) -> dict | None:
-    """Аккаунт по uuid из inline-кнопки; проверяем, что он привязан к этому TG."""
+    """Аккаунт по uuid из inline-кнопки; проверяем привязку к этому TG."""
     if cq.from_user is None:
         await cq.answer()
         return None
     uuid = cq.data.split(":", 1)[1]
-    accounts = await get_accounts_or_alert(cq.message.chat.id, answer_cb=cq.answer)
+    accounts = await get_accounts(cq.message.chat.id)
     if accounts is None:
+        await cq.answer("⚠️ Сервер недоступен, попробуй ещё раз.", show_alert=True)
         return None
     for a in accounts:
         if a["uuid"] == uuid:
@@ -393,7 +873,7 @@ async def owned_account(cq: CallbackQuery) -> dict | None:
     return None
 
 
-# Кик прямо из сообщения «Вход в аккаунт» (2FA выключена) — inline под уведомлением
+# Кик прямо из сообщения «Вход в аккаунт» (2FA выключена)
 @dp.callback_query(F.data.startswith("ak:"))
 async def cb_kick_from_alert(cq: CallbackQuery) -> None:
     await cq.answer()
@@ -408,7 +888,7 @@ async def cb_kick_from_alert(cq: CallbackQuery) -> None:
         await cq.answer("⚠️ Сервер недоступен. Попробуй ещё раз.", show_alert=True)
         return
     if data.get("ok"):
-        extra = ("Игрок кикнут, сессия сброшена."
+        extra = ("Игрок кикнут с сервера, сессия сброшена."
                  if data.get("online")
                  else "Игрок сейчас не в игре, но сессия сброшена — вход будет по паролю.")
         try:
@@ -428,6 +908,13 @@ async def cb_approve(cq: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("ld:"))
 async def cb_deny(cq: CallbackQuery) -> None:
     await _answer_login(cq, "deny")
+
+
+@dp.callback_query()
+async def cb_stale(cq: CallbackQuery) -> None:
+    """Inline-кнопки старых версий (старая «панель» в сообщениях) — больше не нужны."""
+    if cq.data.startswith(("kick:", "2fa:", "pw:")):
+        await cq.answer("Панель теперь внизу чата — нажми /menu", show_alert=False)
 
 
 async def _answer_login(cq: CallbackQuery, action: str) -> None:
@@ -453,20 +940,14 @@ async def _answer_login(cq: CallbackQuery, action: str) -> None:
     else:
         await cq.answer("❌ Вход отклонён.", show_alert=False)
         await cq.message.edit_text("❌ <b>Вход отклонён.</b> Если это был не ты — смени пароль "
-                                   "кнопкой внизу чата (<code>/menu</code>).",
+                                   "кнопкой в панели (<code>/menu</code>).",
                                    reply_markup=None)
-
-
-@dp.callback_query()
-async def cb_stale(cq: CallbackQuery) -> None:
-    """Старые inline-панели прошлых версий: кнопки больше не нужны — панель внизу чата."""
-    await cq.answer("Панель теперь внизу чата — нажми /menu", show_alert=False)
 
 
 # ------------------------------------------------------------------ поллер
 
 async def poller() -> None:
-    """Опрос плагина: ожидающие 2FA-входы (inline «Войти/Отклонить») и уведомления о входах."""
+    """Опрос плагина: ожидающие 2FA-входы (inline) и уведомления о входах."""
     log.info("Прослушивание входов запущено (интервал %.1f c)", CFG.POLL_INTERVAL)
     while True:
         try:
@@ -488,7 +969,7 @@ async def poller() -> None:
                         f"Игрок: <b>{esc(row['nickname'])}</b>\n{ip_line}"
                         f"Это ты?",
                         reply_markup=kb)
-                except Exception as e:  # бот заблокирован/диалог закрыт и т.п.
+                except Exception as e:
                     log.warning("send 2fa tg=%s req=%s: %s", row.get("tg_id"), req_id, e)
         except ApiError as e:
             log.warning("pending poll: %s", e)
@@ -499,7 +980,8 @@ async def poller() -> None:
             alerts = await api.alerts()
             for al in alerts:
                 try:
-                    text = str(al.get("text") or "")
+                    # текст от плагина простой; экранируем на случай спецсимволов в нике/IP
+                    text = esc(al.get("text") or "")
                     uuid = al.get("player_uuid")
                     kb = None
                     if uuid:

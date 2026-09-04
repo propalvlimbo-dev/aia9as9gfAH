@@ -541,10 +541,11 @@ public final class ElytrixAuthPlugin extends Plugin {
     /**
      * Уведомление в Telegram о входе, когда 2FA у аккаунта ВЫКЛЮЧЕНА:
      * игрока пускаем сразу, а бот присылает сообщение «такой-то вошёл».
+     * Уважает настройку «Уведомления» (tg_notify): если выключены — молчим.
      */
     public void notifyTgLogin(Database.PlayerRow row, String ip) {
         try {
-            if (row == null || row.tgId == null) {
+            if (row == null || row.tgId == null || !row.tgNotify) {
                 return;
             }
             String time = new java.text.SimpleDateFormat("dd.MM.yy HH:mm").format(new java.util.Date());
@@ -557,6 +558,50 @@ public final class ElytrixAuthPlugin extends Plugin {
         } catch (SQLException e) {
             getLogger().warning("createAlert(login) error: " + e.getMessage());
         }
+    }
+
+    /** Успешный вход: пишем в историю входов и, если нужно, шлём уведомление в TG. */
+    public void onSuccessfulLogin(Database.PlayerRow row, String ip) {
+        if (row == null) {
+            return;
+        }
+        try {
+            db.recordLogin(row.uuid, ip, now());
+        } catch (SQLException e) {
+            getLogger().warning("recordLogin error: " + e.getMessage());
+        }
+        notifyTgLogin(row, ip);
+    }
+
+    /**
+     * Основная группа LuckPerms игрока (через рефлексию — плагин собирается без LP,
+     * но если LuckPerms стоит на прокси, API в рантайме есть). null, если LP нет.
+     */
+    public String luckPermsGroup(UUID uuid) {
+        try {
+            Class<?> provider = Class.forName("net.luckperms.api.LuckPermsProvider");
+            Object lp = provider.getMethod("get").invoke(null);
+            Object userManager = lp.getClass().getMethod("getUserManager").invoke(lp);
+            Object future = userManager.getClass().getMethod("loadUser", UUID.class)
+                    .invoke(userManager, uuid);
+            Object user = ((java.util.concurrent.CompletableFuture<?>) future)
+                    .get(2, java.util.concurrent.TimeUnit.SECONDS);
+            if (user == null) {
+                return null;
+            }
+            return (String) user.getClass().getMethod("getPrimaryGroup").invoke(user);
+        } catch (Throwable t) {
+            return null; // LuckPerms не установлен/недоступен
+        }
+    }
+
+    /** Есть ли у игрока привилегия Elder (по primary-группе LuckPerms). */
+    public boolean isElder(UUID uuid) {
+        String group = luckPermsGroup(uuid);
+        if (group == null) {
+            return false;
+        }
+        return cfg.elderGroups().contains(group.toLowerCase(java.util.Locale.ROOT));
     }
 
     public boolean isAuthServerMissing() {
@@ -695,13 +740,23 @@ public final class ElytrixAuthPlugin extends Plugin {
         String st = db.pollLoginRequest(s.requestId);
         if ("confirmed".equals(st)) {
             // сессия выдаётся только ПОСЛЕ подтверждения 2FA (иначе её можно обойти)
+            java.util.Optional<Database.PlayerRow> or = db.findPlayer(s.nickname);
+            Database.PlayerRow rr = or.orElse(null);
             if (cfg.sessionsEnabled()) {
                 try {
-                    java.util.Optional<Database.PlayerRow> r = db.findPlayer(s.nickname);
-                    UUID accountUuid = r.map(x -> x.uuid).orElse(s.uuid);
+                    UUID accountUuid = rr != null ? rr.uuid : s.uuid;
                     db.updateSession(accountUuid, s.ip, now + cfg.sessionMaxSeconds());
                 } catch (SQLException e) {
                     getLogger().severe("updateSession(2fa) error: " + e.getMessage());
+                }
+            }
+            // история входов + уведомление в TG (2FA была включена — после кнопки «Войти»
+            // это полноценный вход; уведомление здесь не нужно, но историю пишем)
+            if (rr != null) {
+                try {
+                    db.recordLogin(rr.uuid, s.ip, now);
+                } catch (SQLException e) {
+                    getLogger().warning("recordLogin(2fa) error: " + e.getMessage());
                 }
             }
             markAuthed(s);

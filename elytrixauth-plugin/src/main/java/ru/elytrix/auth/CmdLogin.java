@@ -55,6 +55,11 @@ public final class CmdLogin extends Command {
             plugin.messages().chat(p, "account-no-password");
             return;
         }
+        // аккаунт заморожен владельцем (экстренно, через бота) — вход запрещён
+        if (row.frozen) {
+            plugin.messages().kick(p, "kick-frozen");
+            return;
+        }
         if (!PasswordHash.verify(args[0], row.passwordHash)) {
             plugin.registerFail("nick:" + s.nickname.toLowerCase());
             plugin.registerFail("ip:" + s.ip);
@@ -90,9 +95,7 @@ public final class CmdLogin extends Command {
                     plugin.getLogger().severe("updateSession(login) error: " + e.getMessage());
                 }
             }
-            if (row.tgId != null) {
-                plugin.notifyTgLogin(row, s.ip);
-            }
+            plugin.onSuccessfulLogin(row, s.ip);
             plugin.markAuthed(s);
             plugin.messages().chat(p, "login-ok", "player", s.nickname);
             plugin.playCheckAnimation(p, "check-done-login");

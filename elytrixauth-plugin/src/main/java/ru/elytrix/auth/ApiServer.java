@@ -23,11 +23,18 @@ import java.util.logging.Logger;
  *   GET  /api/pending           -> {"requests":[{id,player_uuid,nickname,ip,tg_id}]}
  *   POST /api/resolve           -> {"action":"confirm|deny","id":123}
  *   POST /api/link              -> {"code":"123456","tg_id":123456} -> {"nickname":...}
- *   GET  /api/accounts?tg_id=   -> {"accounts":[{uuid,nickname,online,tg2fa}]}
+ *   GET  /api/accounts?tg_id=   -> {"accounts":[{uuid,nickname,online,tg2fa,frozen,notify}]}
  *   POST /api/kick              -> {"nickname":...,"tg_id":...} -> {"online":true/false}
  *   POST /api/toggle2fa         -> {"nickname":...,"tg_id":...} -> {"tg2fa":true/false}
  *   POST /api/password          -> {"nickname":...,"tg_id":...,"password":...}
- *   GET  /api/alerts            -> {"alerts":[{tg_id,text}]} (уведомления о входах)
+ *                                -> {"ok":true,"kicked":bool} (игрок кикается с сервера)
+ *   POST /api/freeze            -> {"nickname":...,"tg_id":...,"frozen":true/false}
+ *                                -> {"ok":true,"frozen":bool,"kicked":bool}
+ *   POST /api/notify            -> {"nickname":...,"tg_id":...,"notify":true/false}
+ *                                -> {"ok":true,"notify":bool}
+ *   GET  /api/logins?tg_id=&nickname= -> {"logins":[{ip,ts}]} (последние 10 входов)
+ *   GET  /api/events?tg_id=&nickname= -> {"events":[],"elder":bool,"feature":"coming_soon"}
+ *   GET  /api/alerts            -> {"alerts":[{tg_id,player_uuid,text}]}
  *
  * Авторизация: заголовок X-Api-Key: <api.secret из config.properties>
  */
@@ -61,6 +68,10 @@ public final class ApiServer {
         server.createContext("/api/kick", this::handleKick);
         server.createContext("/api/toggle2fa", this::handleToggle2fa);
         server.createContext("/api/password", this::handlePassword);
+        server.createContext("/api/freeze", this::handleFreeze);
+        server.createContext("/api/notify", this::handleNotify);
+        server.createContext("/api/logins", this::handleLogins);
+        server.createContext("/api/events", this::handleEvents);
         server.createContext("/api/alerts", this::handleAlerts);
         server.setExecutor(Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "elytrix-api");
@@ -169,7 +180,11 @@ public final class ApiServer {
     }
 
     private static String firstField(String body, String key) {
-        // примитивный JSON-парсинг: "key":"value" или "key":123
+        return rawField(body, key);
+    }
+
+    /** Сырое значение после "key": (строка, число или true/false). null, если ключа нет. */
+    private static String rawField(String body, String key) {
         String quoted = "\"" + key + "\"";
         int i = body.indexOf(quoted);
         if (i < 0) {
@@ -202,10 +217,30 @@ public final class ApiServer {
             return sb.toString();
         }
         int end = start;
-        while (end < body.length() && (Character.isDigit(body.charAt(end)))) {
-            end++;
+        while (end < body.length()) {
+            char ch = body.charAt(end);
+            if (Character.isLetterOrDigit(ch) || ch == '.' || ch == '+' || ch == '-') {
+                end++;
+            } else {
+                break;
+            }
         }
         return end > start ? body.substring(start, end) : null;
+    }
+
+    /** Булево поле из тела ("key":true/false). null, если нет/не распознано. */
+    private static Boolean boolField(String body, String key) {
+        String v = rawField(body, key);
+        if (v == null) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(v)) {
+            return Boolean.TRUE;
+        }
+        if ("false".equalsIgnoreCase(v)) {
+            return Boolean.FALSE;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ handlers
@@ -355,6 +390,8 @@ public final class ApiServer {
                     .append(",\"nickname\":").append(jsonStr(r.nickname))
                     .append(",\"online\":").append(online)
                     .append(",\"tg2fa\":").append(r.tg2fa)
+                    .append(",\"frozen\":").append(r.frozen)
+                    .append(",\"notify\":").append(r.tgNotify)
                     .append('}');
         }
         sb.append("]}");
@@ -436,7 +473,7 @@ public final class ApiServer {
         }
     }
 
-    /** Сменить пароль аккаунта — кнопка в боте. Сессия сбрасывается. */
+    /** Сменить пароль аккаунта — кнопка в боте. Сессия сбрасывается, игрок кикается. */
     private void handlePassword(HttpExchange ex) throws IOException {
         if (!authorized(ex)) {
             respondError(ex, 401, "unauthorized");
@@ -471,11 +508,198 @@ public final class ApiServer {
             String hash = PasswordHash.create(password);
             db.setPassword(row.uuid, hash);
             db.clearSession(row.uuid); // следующий вход — по новому паролю
-            respondJson(ex, 200, "{\"ok\":true}");
+            // пароль сменили (возможно, украли аккаунт) — выкидываем с сервера,
+            // если игрок сейчас онлайн: пусть заходит уже с новым паролем
+            boolean kicked = false;
+            ProxiedPlayer online = plugin.proxy().getPlayer(row.uuid);
+            if (online != null) {
+                kicked = true;
+                plugin.kickLater(online, 400, "kick-password-changed");
+            }
+            respondJson(ex, 200, "{\"ok\":true,\"kicked\":" + kicked + "}");
         } catch (SQLException e) {
             log.log(Level.WARNING, "setPassword(api) error", e);
             respondError(ex, 500, "db error");
         }
+    }
+
+    /** Заморозить/разморозить аккаунт (экстренный запрет входа в 1 клик). */
+    private void handleFreeze(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String body = readBody(ex);
+        String nickname = firstField(body, "nickname");
+        if (nickname == null || nickname.isEmpty()) {
+            respondError(ex, 400, "nickname required");
+            return;
+        }
+        Boolean want = boolField(body, "frozen");
+        if (want == null) {
+            respondError(ex, 400, "frozen required");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (!ownsTg(body, row)) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        try {
+            db.setFrozen(row.uuid, want);
+            boolean kicked = false;
+            if (want) {
+                // заморозка = экстренный бан: если игрок онлайн — сразу вон
+                ProxiedPlayer online = plugin.proxy().getPlayer(row.uuid);
+                if (online != null) {
+                    kicked = true;
+                    plugin.kickLater(online, 400, "kick-frozen");
+                }
+            }
+            respondJson(ex, 200, "{\"ok\":true,\"frozen\":" + want + ",\"kicked\":" + kicked + "}");
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "setFrozen(api) error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Включить/выключить уведомления о входах в Telegram. */
+    private void handleNotify(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String body = readBody(ex);
+        String nickname = firstField(body, "nickname");
+        if (nickname == null || nickname.isEmpty()) {
+            respondError(ex, 400, "nickname required");
+            return;
+        }
+        Boolean want = boolField(body, "notify");
+        if (want == null) {
+            respondError(ex, 400, "notify required");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (!ownsTg(body, row)) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        try {
+            db.setTgNotify(row.uuid, want);
+            respondJson(ex, 200, "{\"ok\":true,\"notify\":" + want + "}");
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "setTgNotify(api) error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Последние 10 входов аккаунта (История входов в боте). */
+    private void handleLogins(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String nickname = queryField(ex.getRequestURI(), "nickname");
+        String tgRaw = queryField(ex.getRequestURI(), "tg_id");
+        if (nickname == null || tgRaw == null) {
+            respondError(ex, 400, "nickname and tg_id required");
+            return;
+        }
+        long tgId;
+        try {
+            tgId = Long.parseLong(tgRaw.trim());
+        } catch (NumberFormatException e) {
+            respondError(ex, 400, "bad tg_id");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (row.tgId == null || row.tgId != tgId) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        try {
+            List<Database.LoginRow> logins = db.lastLogins(row.uuid, 10);
+            StringBuilder sb = new StringBuilder("{\"ok\":true,\"logins\":[");
+            for (int i = 0; i < logins.size(); i++) {
+                Database.LoginRow l = logins.get(i);
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"ip\":").append(jsonStr(l.ip))
+                        .append(",\"ts\":").append(l.ts)
+                        .append('}');
+            }
+            sb.append("]}");
+            respondJson(ex, 200, sb.toString());
+        } catch (SQLException e) {
+            log.log(Level.WARNING, "logins error", e);
+            respondError(ex, 500, "db error");
+        }
+    }
+
+    /** Активные ивенты (заглушка): проверяем привилегию Elder, самих ивентов пока нет. */
+    private void handleEvents(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String nickname = queryField(ex.getRequestURI(), "nickname");
+        String tgRaw = queryField(ex.getRequestURI(), "tg_id");
+        if (nickname == null || tgRaw == null) {
+            respondError(ex, 400, "nickname and tg_id required");
+            return;
+        }
+        long tgId;
+        try {
+            tgId = Long.parseLong(tgRaw.trim());
+        } catch (NumberFormatException e) {
+            respondError(ex, 400, "bad tg_id");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (row.tgId == null || row.tgId != tgId) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        String group = plugin.luckPermsGroup(row.uuid);
+        boolean elder = group != null && cfg.elderGroups().contains(
+                group.toLowerCase(java.util.Locale.ROOT));
+        respondJson(ex, 200, "{\"ok\":true,\"elder\":" + elder
+                + ",\"lp\":" + (group != null)
+                + ",\"events\":[],\"feature\":\"coming_soon\"}");
     }
 
     /** Уведомления боту (например, о входе при выключенной 2FA). */

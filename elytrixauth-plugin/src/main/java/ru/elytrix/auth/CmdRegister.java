@@ -85,6 +85,13 @@ import java.sql.SQLException;
             return;
         }
 
+        // первая запись в истории входов (регистрация = вход)
+        try {
+            plugin.db().recordLogin(s.uuid, s.ip, ElytrixAuthPlugin.now());
+        } catch (SQLException e) {
+            plugin.getLogger().warning("recordLogin(reg) error: " + e.getMessage());
+        }
+
         // Регистрация завершена — авторизуем сразу, но перевод на игровой сервер
         // делаем ЧЕРЕЗ КОРОТКУЮ ЗАДЕРЖКУ, а не в момент команды: некоторые клиенты
         // (и агрессивные прокси/VPN-цепочки) не успевают дочитать входящий поток

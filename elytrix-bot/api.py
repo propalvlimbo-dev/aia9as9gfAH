@@ -23,10 +23,10 @@ class ElytrixApi:
         return self._session
 
     async def _call(self, method: str, path: str, json: Optional[dict] = None) -> dict[str, Any]:
-        """Низкоуровневый запрос: поднимает ApiError только при сетевых/HTTP ошибках.
+        """Низкоуровневый запрос: ApiError только при сетевых/HTTP-ошибках.
 
-        ok:false в теле не считает ошибкой — это бизнес-ответ (неверный код, плохой пароль),
-        его разбирают вызывающие методы.
+        ok:false в теле — бизнес-ответ (неверный код, плохой пароль), его
+        разбирают вызывающие методы.
         """
         session = await self._session_get()
         headers = {"X-Api-Key": self.api_key}
@@ -57,13 +57,14 @@ class ElytrixApi:
             return False
 
     async def pending(self) -> list[dict[str, Any]]:
-        """Список ожидающих подтверждения входов (плагин сам отдаёт только с привязкой TG)."""
+        """Ожидающие подтверждения входы (только с привязкой TG)."""
         data = await self._request("GET", "/api/pending")
         return list(data.get("requests", []))
 
     async def resolve(self, request_id: int, action: str) -> bool:
         """action: 'confirm' | 'deny'. True, если запрос был живой и обработан."""
-        data = await self._request("POST", "/api/resolve", json={"id": request_id, "action": action})
+        data = await self._request("POST", "/api/resolve",
+                                   json={"id": request_id, "action": action})
         return bool(data.get("ok"))
 
     async def link(self, code: str, tg_id: int) -> tuple[Optional[str], Optional[str]]:
@@ -78,40 +79,54 @@ class ElytrixApi:
         return None, str(data.get("error", "unknown"))
 
     async def accounts(self, tg_id: int) -> list[dict[str, Any]]:
-        """Аккаунты, привязанные к Telegram: [{uuid, nickname, online, tg2fa}, ...]."""
+        """Аккаунты, привязанные к Telegram.
+
+        Каждый: {uuid, nickname, online, tg2fa, frozen, notify}.
+        """
         data = await self._request("GET", f"/api/accounts?tg_id={tg_id}")
         return list(data.get("accounts", []))
 
     async def kick(self, nickname: str, tg_id: int) -> dict[str, Any]:
-        """Кикнуть игрока (если онлайн) + сбросить сессию.
-
-        Возвращает полный ответ: {ok, online} или {ok: false, error}.
-        """
+        """Кикнуть игрока + сбросить сессию. Полный ответ API."""
         return await self._call("POST", "/api/kick",
                                 json={"nickname": nickname, "tg_id": tg_id})
 
     async def toggle2fa(self, nickname: str, tg_id: int) -> dict[str, Any]:
-        """Переключить 2FA аккаунта.
-
-        Возвращает полный ответ: {ok, tg2fa} или {ok: false, error}.
-        """
+        """Переключить 2FA. Полный ответ API ({ok, tg2fa} или {ok:false,error})."""
         return await self._call("POST", "/api/toggle2fa",
                                 json={"nickname": nickname, "tg_id": tg_id})
 
-    async def change_password(self, nickname: str, tg_id: int, password: str) -> tuple[bool, str]:
-        """Полностью сменить пароль аккаунта.
-
-        Возвращает (True, '') при успехе или (False, код_ошибки) — код один из:
-        too_short / too_long / like_nick / same_chars / player_not_found / not_yours.
-        """
-        data = await self._call("POST", "/api/password",
+    async def change_password(self, nickname: str, tg_id: int, password: str) -> dict[str, Any]:
+        """Сменить пароль. Полный ответ: {ok:true,kicked:bool} или {ok:false,error}."""
+        return await self._call("POST", "/api/password",
                                 json={"nickname": nickname, "tg_id": tg_id, "password": password})
-        if data.get("ok"):
-            return True, ""
-        return False, str(data.get("error", "unknown"))
+
+    async def freeze(self, nickname: str, tg_id: int, frozen: bool) -> dict[str, Any]:
+        """Заморозить/разморозить аккаунт. {ok, frozen, kicked} или {ok:false,error}."""
+        return await self._call("POST", "/api/freeze",
+                                json={"nickname": nickname, "tg_id": tg_id, "frozen": frozen})
+
+    async def notify(self, nickname: str, tg_id: int, on: bool) -> dict[str, Any]:
+        """Вкл/выкл уведомления о входах. {ok, notify} или {ok:false,error}."""
+        return await self._call("POST", "/api/notify",
+                                json={"nickname": nickname, "tg_id": tg_id, "notify": on})
+
+    async def logins(self, nickname: str, tg_id: int) -> list[dict[str, Any]]:
+        """Последние 10 входов: [{ip, ts}, ...] (свежие первыми)."""
+        data = await self._request("GET",
+                                   f"/api/logins?tg_id={tg_id}&nickname={nickname}")
+        return list(data.get("logins", []))
+
+    async def events(self, nickname: str, tg_id: int) -> dict[str, Any]:
+        """Активные ивенты (заглушка) + проверка привилегии Elder."""
+        data = await self._call("GET",
+                                f"/api/events?tg_id={tg_id}&nickname={nickname}")
+        if not data.get("ok"):
+            raise ApiError(str(data.get("error", "unknown")))
+        return data
 
     async def alerts(self) -> list[dict[str, Any]]:
-        """Уведомления о входах (2FA выключена): [{tg_id, text}, ...]. Забирает с сервера."""
+        """Уведомления о входах: [{tg_id, player_uuid, text}]. Забирает с сервера."""
         data = await self._request("GET", "/api/alerts")
         return list(data.get("alerts", []))
 

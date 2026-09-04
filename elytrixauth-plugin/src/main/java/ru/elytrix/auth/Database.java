@@ -34,16 +34,21 @@ public final class Database {
         public final String passwordHash; // может быть null
         public final Long tgId;           // может быть null
         public final boolean tg2fa;       // вход с кнопкой подтверждения в Telegram
+        public final boolean frozen;      // экстренная заморозка (вход запрещён)
+        public final boolean tgNotify;    // уведомления о входах в Telegram
         public final String sessionIp;    // может быть null (сессия не выдана)
         public final Long sessionExpires; // может быть null
 
         PlayerRow(UUID uuid, String nickname, String passwordHash, Long tgId,
-                  boolean tg2fa, String sessionIp, Long sessionExpires) {
+                  boolean tg2fa, boolean frozen, boolean tgNotify,
+                  String sessionIp, Long sessionExpires) {
             this.uuid = uuid;
             this.nickname = nickname;
             this.passwordHash = passwordHash;
             this.tgId = tgId;
             this.tg2fa = tg2fa;
+            this.frozen = frozen;
+            this.tgNotify = tgNotify;
             this.sessionIp = sessionIp;
             this.sessionExpires = sessionExpires;
         }
@@ -129,6 +134,8 @@ public final class Database {
                     + " password_hash VARCHAR(255),"
                     + " tg_id BIGINT,"
                     + " tg_2fa INT DEFAULT 0,"
+                    + " tg_notify INT DEFAULT 1,"
+                    + " frozen INT DEFAULT 0,"
                     + " reg_ip VARCHAR(45),"
                     + " reg_ts BIGINT NOT NULL,"
                     + " last_ip VARCHAR(45),"
@@ -165,6 +172,12 @@ public final class Database {
                     + " created_ts BIGINT NOT NULL,"
                     + " seen INT DEFAULT 0"
                     + ")");
+            st.execute("CREATE TABLE IF NOT EXISTS login_history ("
+                    + " id BIGINT IDENTITY PRIMARY KEY,"
+                    + " player_uuid VARCHAR(36) NOT NULL,"
+                    + " ip VARCHAR(45),"
+                    + " ts BIGINT NOT NULL"
+                    + ")");
         }
         // индексы (HSQLDB не понимает IF NOT EXISTS — проверяем через системные таблицы)
         createIndexIfMissing(c, "players", "idx_players_tg", "CREATE INDEX idx_players_tg ON players(tg_id)");
@@ -172,11 +185,16 @@ public final class Database {
         createIndexIfMissing(c, "pending_links", "idx_links_status", "CREATE INDEX idx_links_status ON pending_links(status, expires_ts)");
         createIndexIfMissing(c, "login_requests", "idx_requests_status", "CREATE INDEX idx_requests_status ON login_requests(status, expires_ts)");
         createIndexIfMissing(c, "login_requests", "idx_requests_player", "CREATE INDEX idx_requests_player ON login_requests(player_uuid)");
+        createIndexIfMissing(c, "login_history", "idx_history_player", "CREATE INDEX idx_history_player ON login_history(player_uuid)");
         // миграция для старых БД: колонки сессий могли не создаться
         ensureColumn(c, "PLAYERS", "SESSION_IP", "ALTER TABLE players ADD COLUMN session_ip VARCHAR(45)");
         ensureColumn(c, "PLAYERS", "SESSION_EXPIRES", "ALTER TABLE players ADD COLUMN session_expires BIGINT");
         // 2FA-переключатель (Telegram-кнопка при входе); по умолчанию выключен
         ensureColumn(c, "PLAYERS", "TG_2FA", "ALTER TABLE players ADD COLUMN tg_2fa INT DEFAULT 0");
+        // уведомления о входах в Telegram (по умолчанию включены)
+        ensureColumn(c, "PLAYERS", "TG_NOTIFY", "ALTER TABLE players ADD COLUMN tg_notify INT DEFAULT 1");
+        // экстренная заморозка аккаунта (по умолчанию снята)
+        ensureColumn(c, "PLAYERS", "FROZEN", "ALTER TABLE players ADD COLUMN frozen INT DEFAULT 0");
         // uuid игрока в уведомлении — чтобы бот мог дать кнопку «Кикнуть» прямо под ним
         ensureColumn(c, "TG_ALERTS", "PLAYER_UUID", "ALTER TABLE tg_alerts ADD COLUMN player_uuid VARCHAR(36)");
     }
@@ -322,6 +340,8 @@ public final class Database {
     private PlayerRow row(ResultSet rs) throws SQLException {
         Long tg = rs.getObject("tg_id") == null ? null : rs.getLong("tg_id");
         boolean tg2fa = rs.getInt("tg_2fa") != 0;
+        boolean frozen = rs.getInt("frozen") != 0;
+        boolean tgNotify = rs.getInt("tg_notify") != 0;
         String sessionIp = rs.getString("session_ip");
         Long sessionExpires = rs.getObject("session_expires") == null ? null : rs.getLong("session_expires");
         return new PlayerRow(
@@ -330,6 +350,8 @@ public final class Database {
                 rs.getString("password_hash"),
                 tg,
                 tg2fa,
+                frozen,
+                tgNotify,
                 sessionIp,
                 sessionExpires);
     }
@@ -338,7 +360,7 @@ public final class Database {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, frozen, tg_notify, session_ip, session_expires "
                                 + "FROM players WHERE nickname = ?")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -375,7 +397,7 @@ public final class Database {
         try {
             return withConn(c -> {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, frozen, tg_notify, session_ip, session_expires "
                                 + "FROM players WHERE LOWER(nickname) = LOWER(?)")) {
                     ps.setString(1, nickname);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -482,7 +504,7 @@ public final class Database {
             return withConn(c -> {
                 List<PlayerRow> out = new ArrayList<>();
                 try (PreparedStatement ps = c.prepareStatement(
-                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, session_ip, session_expires "
+                        "SELECT uuid, nickname, password_hash, tg_id, tg_2fa, frozen, tg_notify, session_ip, session_expires "
                                 + "FROM players WHERE tg_id = ?")) {
                     ps.setLong(1, tgId);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -527,6 +549,77 @@ public final class Database {
                 ps.executeUpdate();
             }
             return null;
+        });
+    }
+
+    /** Включить/выключить уведомления о входах в Telegram. */
+    public void setTgNotify(UUID uuid, boolean on) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET tg_notify = ? WHERE uuid = ?")) {
+                ps.setInt(1, on ? 1 : 0);
+                ps.setString(2, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Заморозить/разморозить аккаунт (экстренный запрет входа). */
+    public void setFrozen(UUID uuid, boolean frozen) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE players SET frozen = ? WHERE uuid = ?")) {
+                ps.setInt(1, frozen ? 1 : 0);
+                ps.setString(2, uuid.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    // ---------------- login_history (последние входы для бота) ----------------
+
+    /** Записать факт успешного входа (для «Истории входов» в боте). */
+    public void recordLogin(UUID uuid, String ip, long now) throws SQLException {
+        withConn(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO login_history (player_uuid, ip, ts) VALUES (?, ?, ?)")) {
+                ps.setString(1, uuid.toString());
+                ps.setString(2, ip);
+                ps.setLong(3, now);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Одна запись истории входов. */
+    public static final class LoginRow {
+        public final String ip;
+        public final long ts;
+
+        LoginRow(String ip, long ts) {
+            this.ip = ip;
+            this.ts = ts;
+        }
+    }
+
+    /** Последние N успешных входов игрока (самые свежие — первыми). */
+    public List<LoginRow> lastLogins(UUID uuid, int limit) throws SQLException {
+        return withConn(c -> {
+            List<LoginRow> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT ip, ts FROM login_history WHERE player_uuid = ? "
+                            + "ORDER BY ts DESC, id DESC FETCH FIRST " + Math.max(1, limit) + " ROWS ONLY")) {
+                ps.setString(1, uuid.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new LoginRow(rs.getString("ip"), rs.getLong("ts")));
+                    }
+                }
+            }
+            return out;
         });
     }
 

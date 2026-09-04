@@ -93,6 +93,13 @@ public final class ElytrixAuthListener implements Listener {
         // в PLAY). Здесь — только состояние и БД (кики-дисконнекты допустимы:
         // login-кик — штатный пакет фазы LOGIN).
 
+        // аккаунт заморожен владельцем (экстренно, через бота) — не пускаем,
+        // даже с активной сессией (мягкий кик, как остальные)
+        if (row != null && row.frozen) {
+            plugin.kickLater(p, 400, "kick-frozen");
+            return;
+        }
+
         // 1) автовход по активной сессии (тот же IP, срок не истёк).
         //    При включённой 2FA (кнопка в Telegram) автовход не действует —
         //    всегда нужен пароль + подтверждение.
@@ -121,9 +128,9 @@ public final class ElytrixAuthListener implements Listener {
 
     /** Активная сессия → пускаем без пароля (состояние/БД, без пакетов игроку). */
     private void autoLogin(ProxiedPlayer p, AuthSession s, Database.PlayerRow row, String ip) {
-        // при привязанном TG и выключенной 2FA авто-вход — тоже «вход в аккаунт»:
-        // шлём боту уведомление (под ним кнопка «Кикнуть»)
-        plugin.notifyTgLogin(row, ip);
+        // авто-вход — тоже «вход в аккаунт»: пишем историю, шлём уведомление в TG
+        // (уважает настройку «Уведомления»)
+        plugin.onSuccessfulLogin(row, ip);
         plugin.markAuthed(s); // визуал внутри markAuthed сам отключится — сервера ещё нет
         long expires = ElytrixAuthPlugin.now() + plugin.cfg().sessionMaxSeconds();
         try {

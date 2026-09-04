@@ -148,4 +148,17 @@ public final class PluginConfig {
     public int    apiPort()      { return getInt("api.port", 8754); }
     public String apiSecret()    { return get("api.secret", ""); }
     public String apiBind()      { return get("api.bind", "0.0.0.0"); }
+
+    /** Группы LuckPerms, считающиеся привилегией Elder (для раздела бота «Активные ивенты»). */
+    public java.util.Set<String> elderGroups() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        String v = get("elder.groups", "elder").toLowerCase(java.util.Locale.ROOT);
+        for (String part : v.split(",")) {
+            String g = part.trim();
+            if (!g.isEmpty()) {
+                out.add(g);
+            }
+        }
+        return out;
+    }
 }
