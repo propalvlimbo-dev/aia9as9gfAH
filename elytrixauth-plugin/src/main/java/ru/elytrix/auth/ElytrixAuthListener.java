@@ -103,10 +103,10 @@ public final class ElytrixAuthListener implements Listener {
         }
 
         // 1) автовход по активной сессии (тот же IP, срок не истёк).
-        //    При включённой 2FA (кнопка в Telegram) автовход не действует —
-        //    всегда нужен пароль + подтверждение.
+        //    Сессия действует и при включённой 2FA: повторный вход в течение
+        //    срока сессии идёт без пароля и без подтверждения в Telegram
+        //    (подтверждение нужно только для первого входа, когда сессии нет).
         if (row != null && row.passwordHash != null && plugin.cfg().sessionsEnabled()
-                && !(row.tgId != null && row.tg2fa)
                 && row.sessionExpires != null && row.sessionIp != null) {
             boolean sameIp = row.sessionIp.equals(ip);
             if (!plugin.cfg().sessionCheckIp() || sameIp) {
@@ -180,6 +180,11 @@ public final class ElytrixAuthListener implements Listener {
             }
             plugin.scheduleWelcome(p, s);
             plugin.ensureNotAuth(p);
+            // игрок на игровом сервере — заранее тянем профиль (донат/коины/время)
+            // и кладём в кэш, чтобы бот показывал его даже когда игрок офлайн
+            if (plugin.cfg().targetServer().equalsIgnoreCase(serverName)) {
+                plugin.profileProvider().warm(p.getUniqueId());
+            }
             return;
         }
         plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()

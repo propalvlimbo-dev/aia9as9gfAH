@@ -126,6 +126,19 @@ final class McPlugins {
         }
     }
 
+    /** Наигранное время игрока (тики PLAY_ONE_MINUTE); -1, если не доступно. */
+    static long playtimeTicks(org.bukkit.entity.Player p) {
+        try {
+            Object v = p.getStatistic(org.bukkit.Statistic.PLAY_ONE_MINUTE);
+            if (v instanceof Number) {
+                return ((Number) v).longValue();
+            }
+            return -1;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
     private static Long toLong(Object v) {
         if (v instanceof Number) {
             return ((Number) v).longValue();

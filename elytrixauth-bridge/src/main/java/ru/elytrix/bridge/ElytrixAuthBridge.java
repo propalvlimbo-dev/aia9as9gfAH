@@ -67,12 +67,19 @@ public final class ElytrixAuthBridge extends JavaPlugin implements PluginMessage
             UUID uuid = UUID.fromString(uuidStr);
             McPlugins.Lp lp = McPlugins.luckPerms(uuid);
             Long coins = McPlugins.playerPoints(uuid);
+            // наигранное время (statistic PLAY_ONE_MINUTE) доступно только для
+            // онлайн-игрока на этом сервере; у офлайн-цели будет -1 (неизвестно)
+            long playtime = -1;
+            if (replyTo.getUniqueId().equals(uuid)) {
+                playtime = McPlugins.playtimeTicks(replyTo);
+            }
             resp = "RS|" + uuid + "|" + (lp != null ? 1 : 0) + "|"
                     + McPlugins.enc(lp != null ? orEmpty(lp.prefix) : "") + "|"
                     + McPlugins.enc(lp != null ? orEmpty(lp.group) : "") + "|"
-                    + (coins != null ? 1 : 0) + "|" + (coins != null ? coins : 0);
+                    + (coins != null ? 1 : 0) + "|" + (coins != null ? coins : 0)
+                    + "|" + playtime;
         } catch (Throwable t) {
-            resp = "RS|" + uuidStr + "|0|||0|0";
+            resp = "RS|" + uuidStr + "|0|||0|0|-1";
         }
         try {
             replyTo.sendPluginMessage(this, CHANNEL, resp.getBytes(StandardCharsets.UTF_8));

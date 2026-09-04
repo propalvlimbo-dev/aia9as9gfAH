@@ -235,8 +235,7 @@ async def send_security(chat_id: int, result: str | None = None) -> None:
         else:
             await send_legacy_multi(chat_id)
         return
-    lines = ["🛡️ <b>Безопасность</b>", ""]
-    lines += acc_lines(acc)
+    lines = ["🛡️ <b>Безопасность</b>"]
     lines += ["", "Кнопки внизу чата:"]
     if result:
         lines += ["", result]
@@ -253,9 +252,7 @@ async def send_game(chat_id: int, result: str | None = None) -> None:
         else:
             await send_legacy_multi(chat_id)
         return
-    lines = ["🎮 <b>Игровой процесс</b>", "",
-             f"┃ Аккаунт: <b>{esc(acc['nickname'])}</b>",
-             "", "Кнопки внизу чата:"]
+    lines = ["🎮 <b>Игровой процесс</b>", "", "Кнопки внизу чата:"]
     if result:
         lines += ["", result]
     await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_game())
@@ -271,11 +268,7 @@ async def send_rewards(chat_id: int, result: str | None = None) -> None:
         else:
             await send_legacy_multi(chat_id)
         return
-    lines = ["🎁 <b>Награды и бонусы</b>", "",
-             "┃ ● Ежедневный бонус и промокоды заработают вместе с системой "
-             "ElytrixFree (пока заглушка).",
-             f"┃ ● Подписка на канал подтверждена: {CHANNEL_URL}",
-             "", "Кнопки внизу чата:"]
+    lines = ["🎁 <b>Награды и бонусы</b>", "", "Кнопки внизу чата:"]
     if result:
         lines += ["", result]
     await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb_rewards())
@@ -336,13 +329,15 @@ def kb_subscribe() -> InlineKeyboardMarkup:
 # ------------------------------------------------------------------ подписка на канал (Награды)
 
 async def check_subscribed(tg_id: int) -> bool | None:
-    """True - доступ есть (подписан или проверка выключена).
+    """True - доступ есть (подписан).
 
-    False - не подписан; None - не удалось проверить (бот не админ канала и т.п.).
+    False - не подписан; None - не удалось проверить (CHANNEL_ID пуст,
+    бот не админ канала и т.п.). Раздел закрыт во всех случаях, кроме True.
     """
     channel = (CFG.CHANNEL_ID or "").strip()
     if not channel:
-        return True  # проверка отключена конфигом
+        log.warning("CHANNEL_ID пуст - «Награды» закрыты для всех.")
+        return None
     try:
         member = await bot.get_chat_member(chat_id=channel, user_id=tg_id)
     except Exception as e:
@@ -352,7 +347,11 @@ async def check_subscribed(tg_id: int) -> bool | None:
 
 
 def subscribe_block_text() -> str:
-    channel = (CFG.CHANNEL_ID or "").strip().lstrip("@") or "elytrix_ru"
+    channel = (CFG.CHANNEL_ID or "").strip().lstrip("@")
+    if not channel:
+        return ("🎁 <b>Награды и бонусы</b> - раздел закрыт\n\n"
+                "┃ ● Проверка подписки на канал не настроена у бота.\n"
+                "┃ ● Напиши администратору - он включит её (CHANNEL_ID).")
     return ("🎁 <b>Награды и бонусы</b> - раздел для подписчиков канала\n\n"
             f"┃ ● Подпишись на <b>@{esc(channel)}</b> - и раздел откроется.\n"
             "┃ ● Уже подписан? Нажми «✅ Я подписался».")
@@ -364,17 +363,18 @@ async def block_rewards(chat_id: int) -> None:
 
 
 async def ensure_rewards_access(chat_id: int, tg_id: int) -> bool:
-    """True - можно показать содержимое наград; False - пользователя заблокировали."""
+    """True - можно показать содержимое наград; False - раздел закрыт."""
     st = await check_subscribed(tg_id)
     if st is True:
         return True
     if st is False:
         await block_rewards(chat_id)
         return False
+    await block_rewards(chat_id)
     await bot.send_message(
         chat_id,
-        "⚠️ Не удалось проверить подписку на канал.\n"
-        "Убедись, что бот добавлен в канал <b>администратором</b>, и попробуй ещё раз.")
+        "⚠️ Не удалось проверить подписку на канал: бот должен быть добавлен "
+        "в канал <b>администратором</b>, а в .env задан CHANNEL_ID.")
     return False
 
 
@@ -391,11 +391,11 @@ async def cmd_start(m: Message) -> None:
         return
     if not accounts:
         await m.answer(
-            "👋 <b>Elytrix</b> - привязка Minecraft-аккаунта к Telegram.\n\n"
-            "1) Зайди на сервер и напиши в игре <code>/addtg</code>\n"
-            "2) Ты получишь код - отправь его мне: <code>/link &lt;код&gt;</code>\n\n"
-            "После привязки внизу чата появится панель управления: "
-            "🛡️ Безопасность · 🎮 Игровой процесс · 🎁 Награды и бонусы.")
+            "☁ <b>ᴇʟʏᴛʀɪx</b> - привязка аккаунта к Telegram\n\n"
+            "┃ ● Зайди на сервер и напиши в игре: <code>/addtg</code>\n"
+            "┃ ● Придёт код - отправь его сюда: <code>/link &lt;код&gt;</code>\n\n"
+            "После привязки откроется панель управления:\n"
+            "┃ 🛡️ Безопасность · 🎮 Игровой процесс · 🎁 Награды и бонусы")
         return
     await send_main(m.chat.id)  # одно сообщение: панель вместо приветствия
 
@@ -763,35 +763,64 @@ async def show_profile(m: Message) -> None:
         return
     nick = acc["nickname"]
     where = "в игре" if acc["online"] else "не в игре"
-    donate = "не удалось получить (LuckPerms не отвечает)"
-    coins = "не удалось получить (PlayerPoints не отвечает)"
     try:
         data = await api.profile(nick, m.from_user.id)
-        d = data.get("donate", {})
-        if d.get("available"):
-            prefix = (d.get("prefix") or "").strip()
-            group = (d.get("group") or "").strip()
-            if prefix:
-                donate = f"<code>{esc(prefix)}</code>"
-                if group and group.lower() not in prefix.lower():
-                    donate += f" (группа: {esc(group)})"
-            elif group:
-                donate = f"группа <code>{esc(group)}</code>"
-            else:
-                donate = "данные пусты"
-        c = data.get("coins", {})
-        if c.get("available"):
-            coins = f"<code>{int(c.get('value') or 0):,}</code>".replace(",", " ")
     except ApiError as e:
         log.warning("profile error: %s", e)
-    await m.answer(
-        f"👤 <b>Профиль и статистика</b> - {esc(nick)}\n\n"
-        f"┃ ● Статус: {where}\n"
-        f"┃ ● Донат (LuckPerms): {donate}\n"
-        f"┃ ● Коины (PlayerPoints): {coins}\n"
-        "┃ ● Наигранное время: скоро\n\n"
-        "Если донат/коины не подтянулись - проверь, что на игровом сервере стоит "
-        "мост ElytrixAuthBridge.jar (см. README).")
+        await m.answer("⚠️ Сервер недоступен. Попробуй ещё раз.")
+        return
+
+    d = data.get("donate", {})
+    if d.get("available"):
+        prefix = (d.get("prefix") or "").strip()
+        group = (d.get("group") or "").strip()
+        if prefix:
+            donate = f"<code>{esc(prefix)}</code>"
+            if group and group.lower() not in prefix.lower():
+                donate += f" <i>({esc(group)})</i>"
+        elif group:
+            donate = f"группа <code>{esc(group)}</code>"
+        else:
+            donate = "данные пусты"
+    else:
+        donate = "недоступно"
+
+    c = data.get("coins", {})
+    if c.get("available"):
+        coins = f"<code>{int(c.get('value') or 0):,}</code>".replace(",", " ")
+    else:
+        coins = "недоступно"
+
+    pt = data.get("playtime", {})
+    if pt.get("available"):
+        minutes = int(pt.get("minutes") or 0)
+        h, mm = divmod(minutes, 60)
+        playtime = f"<b>{h} ч {mm} мин</b>" if h else f"<b>{mm} мин</b>"
+    else:
+        playtime = "недоступно"
+
+    meta = data.get("meta", {})
+    note = None
+    if meta.get("from_cache"):
+        age_min = max(0, int(meta.get("cache_age_ms") or 0) // 60000)
+        note = f"данные из кэша ({age_min} мин назад)"
+    elif not d.get("available") or not c.get("available"):
+        if not meta.get("lp_proxy") and meta.get("relay") != "ok":
+            note = ("не удалось достучаться до игрового сервера: нужен мост "
+                    "ElytrixAuthBridge.jar и хотя бы один игрок онлайн на нём")
+        elif not d.get("available"):
+            note = "LuckPerms не отвечает (не установлен на прокси или игровом сервере)"
+        elif not c.get("available"):
+            note = "PlayerPoints не отвечает (не установлен на игровом сервере)"
+
+    lines = [f"👤 <b>Профиль и статистика</b> - {esc(nick)}", "",
+             f"┃ ● Статус: {where}",
+             f"┃ ● Донат (LuckPerms): {donate}",
+             f"┃ ● Коины (PlayerPoints): {coins}",
+             f"┃ ● Наигранное время: {playtime}"]
+    if note:
+        lines += ["", f"┃ {esc(note)}"]
+    await m.answer("\n".join(lines))
 
 
 async def show_events(m: Message) -> None:

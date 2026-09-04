@@ -536,7 +536,7 @@ public final class ElytrixAuthPlugin extends Plugin {
     }
 
     /** Шаг кадров анимации «проверки пароля», мс. */
-    private static final long CHECK_STEP_MS = 300;
+    private static final long CHECK_STEP_MS = 180;
 
     /**
      * Красивая анимация «Проверка пароля» в title после успешного /reg или /login
@@ -579,7 +579,7 @@ public final class ElytrixAuthPlugin extends Plugin {
                     Visual.title(p, messages().raw(doneTitleKey), doneSub, 1, 12, 5);
                 }
             }, endMs, TimeUnit.MILLISECONDS);
-            long connectDelay = endMs + 900 + (delayedConnect ? 1500 : 0);
+            long connectDelay = endMs + 500 + (delayedConnect ? 400 : 0);
             executor.schedule(() -> {
                 if (p.isConnected()) {
                     Visual.clearTitle(p);

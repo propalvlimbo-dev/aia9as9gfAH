@@ -34,10 +34,13 @@ import java.util.logging.Logger;
  *                                -> {"ok":true,"notify":bool}
  *   GET  /api/logins?tg_id=&nickname= -> {"logins":[{ip,ts}]} (последние 10 входов)
  *   GET  /api/events?tg_id=&nickname= -> {"events":[],"elder":bool,"lp":bool,"feature":"coming_soon"}
- *   GET  /api/profile?tg_id=&nickname= -> {"donate":{"available","prefix","group"},
-*                                          "coins":{"available","value"}}
-*                                        (LuckPerms: прокси и/или игровой сервер через мост;
-*                                         PlayerPoints-коины — тоже через мост ElytrixAuthBridge)
+  *   GET  /api/profile?tg_id=&nickname= -> {"donate":{"available","prefix","group"},
+ *                                          "coins":{"available","value"},
+ *                                          "playtime":{"available","minutes"},
+ *                                          "meta":{"lp_proxy","relay","from_cache","cache_age_ms"}}
+ *                                        (LuckPerms: прокси и/или мост на игровом сервере;
+ *                                         коины PlayerPoints и наигранное время — через мост;
+ *                                         ответы кэшируются на 10 минут)
 *   GET  /api/alerts            -> {"alerts":[{tg_id,player_uuid,text}]}
  *
  * Авторизация: заголовок X-Api-Key: <api.secret из config.properties>
@@ -741,12 +744,19 @@ public final class ApiServer {
             return;
         }
         ProfileProvider.ProfileData d = plugin.profileProvider().profile(row.uuid);
+        long ptMinutes = d.playtimeTicks >= 0 ? d.playtimeTicks / 20 / 60 : -1;
         respondJson(ex, 200, "{\"ok\":true,\"nickname\":" + jsonStr(row.nickname)
                 + ",\"donate\":{\"available\":" + d.lp
                 + ",\"prefix\":" + jsonStr(ProfileProvider.cleanColors(d.lpPrefix))
                 + ",\"group\":" + jsonStr(d.lpGroup) + "}"
                 + ",\"coins\":{\"available\":" + d.pp
-                + ",\"value\":" + d.coins + "}}");
+                + ",\"value\":" + d.coins + "}"
+                + ",\"playtime\":{\"available\":" + (ptMinutes >= 0)
+                + ",\"minutes\":" + ptMinutes + "}"
+                + ",\"meta\":{\"lp_proxy\":" + d.lpProxy
+                + ",\"relay\":" + jsonStr(d.relay)
+                + ",\"from_cache\":" + d.fromCache
+                + ",\"cache_age_ms\":" + d.cacheAgeMs + "}}");
     }
 
     /** Уведомления боту (например, о входе при выключенной 2FA). */

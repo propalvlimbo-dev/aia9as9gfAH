@@ -444,7 +444,7 @@ public final class Database {
             try (PreparedStatement ps = c.prepareStatement(
                     "UPDATE players SET password_hash = NULL, tg_id = NULL, "
                             + "session_ip = NULL, session_expires = NULL, "
-                            + "frozen = 0, tg2fa = 0, tg_notify = 1 WHERE uuid = ?")) {
+                            + "frozen = 0, tg_2fa = 0, tg_notify = 1 WHERE uuid = ?")) {
                 ps.setString(1, uuid.toString());
                 ps.executeUpdate();
             }
