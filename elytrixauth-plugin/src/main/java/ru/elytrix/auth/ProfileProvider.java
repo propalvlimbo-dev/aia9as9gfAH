@@ -85,8 +85,14 @@ final class ProfileProvider implements Listener {
     }
 
     void register() {
-        plugin.proxy().registerChannel(CHANNEL);
-        plugin.proxy().getPluginManager().registerListener(plugin, this);
+        // Канал/слушатель регистрируем ТОЛЬКО при profile.bridge=true.
+        // На NullCordX сама регистрация канала плагин-сообщений на прокси
+        // рвёт игроку вход («Сервер, на котором вы находились, выключился»),
+        // поэтому по умолчанию мост выключен и вход как в рабочей версии.
+        if (plugin.cfg().profileBridge()) {
+            plugin.proxy().registerChannel(CHANNEL);
+            plugin.proxy().getPluginManager().registerListener(plugin, this);
+        }
     }
 
     void shutdown() {
@@ -111,13 +117,21 @@ final class ProfileProvider implements Listener {
             d.lpPrefix = nz(lp.prefix);
         }
 
-        // 2) свежий кэш (данные моста/времени) — отдаём как есть
+        // 2) свежий кэш — отдаём как есть
         Cached c = cache.get(uuid);
         long nowMs = System.currentTimeMillis();
         if (c != null && nowMs - c.at < CACHE_TTL_MS) {
             merge(d, c.d);
             d.fromCache = true;
             d.cacheAgeMs = nowMs - c.at;
+            return d;
+        }
+
+        // 2a) мост выключен (profile.bridge=false, дефолт для NullCordX) — отдаём
+        // локальный LuckPerms (с прокси) и кэшируем; коины/playtime недоступны.
+        if (!plugin.cfg().profileBridge()) {
+            d.relay = "bridge_off";
+            cache.put(uuid, new Cached(copyOf(d), System.currentTimeMillis()));
             return d;
         }
 

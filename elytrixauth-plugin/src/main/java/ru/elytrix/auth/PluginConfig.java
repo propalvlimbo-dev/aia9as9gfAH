@@ -123,6 +123,11 @@ public final class PluginConfig {
     /** Показывать ли первый UI (чат-приветствие/боссбар/title) сразу в
      *  ServerConnectedEvent (как в рабочей версии). false — откладывать на 2.5с. */
     public boolean entryUiImmediate() { return getBool("entry.ui-immediate", true); }
+
+    /** Профиль через мост на игровом сервере (plugin messaging "elytrix:auth").
+     *  На NullCordX регистрация канала/слушателя на прокси рвёт вход игроку,
+     *  поэтому по умолчанию мост ВЫКЛЮЧЕН (работает только локальный LuckPerms). */
+    public boolean profileBridge() { return getBool("profile.bridge", false); }
     public String targetServer() { return get("target.server", "grief"); }
 
     /** Путь к файлу встроенной БД (HSQLDB). Относительный — от папки плагина. */
