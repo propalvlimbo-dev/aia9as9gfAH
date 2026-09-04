@@ -76,13 +76,6 @@ public final class ElytrixAuthListener implements Listener {
             }
         }
 
-        Database.PlayerRow row = null;
-        try {
-            row = plugin.db().findPlayer(p.getName()).orElse(null);
-        } catch (Exception ex) {
-            plugin.getLogger().warning("findPlayer(join) error: " + ex.getMessage());
-        }
-
         AuthSession s = plugin.join(p.getUniqueId(), p.getName(), ip);
         s.totalSec = plugin.cfg().loginTimeout();
 
@@ -90,43 +83,65 @@ public final class ElytrixAuthListener implements Listener {
         // bossbar). Для клиентов 1.20.2+ прокси отправляет LoginSuccess только в
         // конце подключения к первому серверу (ServerConnector.cutThrough), т.е.
         // в PostLogin клиент всё ещё в состоянии LOGIN — пакеты UI в этом окне
-        // ломают вход ("login_disconnect ... was larger than I expected").
-        // Все приветствия/подсказки показываем в onServerConnected (клиент уже
-        // в PLAY). Здесь — только состояние и БД (кики-дисконнекты допустимы:
-        // login-кик — штатный пакет фазы LOGIN).
+        // ломают вход. Все приветствия/подсказки показываем в onServerConnected.
+        // Здесь — только состояние (кики-дисконнекты допустимы: login-кик — штатный
+        // пакет фазы LOGIN).
 
-        // аккаунт заморожен владельцем (экстренно, через бота) — не пускаем,
-        // даже с активной сессией (мягкий кик, как остальные)
-        if (row != null && row.frozen) {
-            plugin.kickLater(p, 400, "kick-frozen");
-            return;
-        }
+        // Чтение БД (заморозка/сессия/новичок) делаем В ФОНЕ: HSQLDB на слабом
+        // VDS может тормозить 50-150 мс, а блокировать поток событий прокси в
+        // момент доводки коннекта до auth нельзя — сервер рвёт соединение
+        // («Сервер, на котором вы находились, выключился»). Пока БД отвечает,
+        // игрок уже на auth и видит экран; needReg докрутится через ~100 мс.
+        final ProxiedPlayer fp = p;
+        final String fip = ip;
+        final AuthSession fs = s;
+        final long fnow = now;
+        plugin.runAsync(() -> resolveJoinRow(fp, fs, fip, fnow));
+    }
 
-        // 1) автовход по активной сессии (тот же IP, срок не истёк).
-        //    Сессия действует и при включённой 2FA: повторный вход в течение
-        //    срока сессии идёт без пароля и без подтверждения в Telegram
-        //    (подтверждение нужно только для первого входа, когда сессии нет).
-        if (row != null && row.passwordHash != null && plugin.cfg().sessionsEnabled()
-                && row.sessionExpires != null && row.sessionIp != null) {
-            boolean sameIp = row.sessionIp.equals(ip);
-            if (!plugin.cfg().sessionCheckIp() || sameIp) {
-                if (row.sessionExpires >= now) {
-                    autoLogin(p, s, row, ip);
-                    return;
+    /** Фоновая часть PostLogin: читает аккаунт из БД и решает судьбу входа. */
+    private void resolveJoinRow(ProxiedPlayer p, AuthSession s, String ip, long now) {
+        try {
+            if (!p.isConnected()) {
+                return; // игрок уже отвалился, пока читали БД
+            }
+            Database.PlayerRow row = plugin.db().findPlayer(p.getName()).orElse(null);
+
+            // аккаунт заморожен владельцем (экстренно, через бота) — не пускаем,
+            // даже с активной сессией (мягкий кик, как остальные)
+            if (row != null && row.frozen) {
+                plugin.kickLater(p, 400, "kick-frozen");
+                return;
+            }
+
+            // 1) автовход по активной сессии (тот же IP, срок не истёк).
+            //    Сессия действует и при включённой 2FA: повторный вход в течение
+            //    срока сессии идёт без пароля и без подтверждения в Telegram.
+            if (row != null && row.passwordHash != null && plugin.cfg().sessionsEnabled()
+                    && row.sessionExpires != null && row.sessionIp != null) {
+                boolean sameIp = row.sessionIp.equals(ip);
+                if (!plugin.cfg().sessionCheckIp() || sameIp) {
+                    if (row.sessionExpires >= now) {
+                        autoLogin(p, s, row, ip);
+                        return;
+                    }
+                }
+                if (plugin.cfg().sessionCheckIp() && !sameIp) {
+                    s.sessionDropped = true; // сессия была, но IP сменился — нужен пароль
                 }
             }
-            if (plugin.cfg().sessionCheckIp() && !sameIp) {
-                s.sessionDropped = true; // сессия была, но IP сменился — нужен пароль
-            }
-        }
 
-        // 2) новичок или вход по паролю
-        if (row == null || row.passwordHash == null) {
-            s.needReg = true;
-        } else {
-            s.needReg = false;
+            // 2) новичок или вход по паролю
+            if (row == null || row.passwordHash == null) {
+                s.needReg = true;
+            } else {
+                s.needReg = false;
+            }
+        } catch (Throwable t) {
+            plugin.getLogger().warning("resolveJoinRow error for " + p.getName() + ": " + t);
         }
     }
+
 
     /** Активная сессия → пускаем без пароля (состояние/БД, без пакетов игроку). */
     private void autoLogin(ProxiedPlayer p, AuthSession s, Database.PlayerRow row, String ip) {
