@@ -16,7 +16,7 @@ fi
 rm -rf build/classes
 mkdir -p build/classes
 "$JAVA_BIN" -jar "$ECJ_JAR" \
-    -source 17 -target 17 -proc:none -nowarn \
+    -source 8 -target 8 -proc:none -nowarn \
     -encoding UTF-8 \
     -d build/classes \
     $(find src/main/java stubs -name "*.java")

@@ -20,10 +20,12 @@ if [ ! -f "$ROOT/lib/hsqldb.jar" ]; then
 fi
 
 # 1) компиляция (исходники плагина + стабы Bungee API)
+# target 8: чтобы jar работал на ЛЮБОЙ Java прокси (8/11/16/17/21+).
+# Исходники намеренно без 9+ API (List.of, String.repeat и т.п.) — см. код.
 rm -rf build/classes build/jar-merge
 mkdir -p build/classes build/jar-merge
 "$JAVA_BIN" -jar "$ECJ_JAR" \
-    -source 17 -target 17 -proc:none -nowarn \
+    -source 8 -target 8 -proc:none -nowarn \
     -encoding UTF-8 \
     -d build/classes \
     $(find src/main/java stubs -name "*.java")
