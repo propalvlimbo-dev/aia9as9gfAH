@@ -31,6 +31,11 @@ class Config:
     # Как часто опрашивать плагин на новые запросы входа (сек)
     POLL_INTERVAL: float = float(_env("POLL_INTERVAL", "2.0"))
 
+    # Канал для раздела «Награды и бонусы»: подписка обязательна.
+    # Пусто = проверка выключена. Бот должен быть администратором канала,
+    # иначе проверять членство Telegram API не разрешит.
+    CHANNEL_ID: str = _env("CHANNEL_ID", "@elytrix_ru")
+
     @classmethod
     def validate(cls) -> list[str]:
         problems: list[str] = []

@@ -33,6 +33,7 @@ public final class ElytrixAuthPlugin extends Plugin {
     private Messages messages;
     private Database db;
     private ApiServer api;
+    private ProfileProvider profileProvider;
     private ScheduledExecutorService executor;
 
     private final Map<UUID, AuthSession> sessions = new ConcurrentHashMap<>();
@@ -90,6 +91,11 @@ public final class ElytrixAuthPlugin extends Plugin {
         pm.registerCommand(this, new CmdLogout(this));
         pm.registerListener(this, new ElytrixAuthListener(this));
 
+        // Профиль (донат LuckPerms + коины PlayerPoints): локально на прокси
+        // и/или через мост ElytrixAuthBridge на игровом сервере
+        profileProvider = new ProfileProvider(this);
+        profileProvider.register();
+
         // тик каждые 500 мс: таймер/боссбар, actionbar, опрос 2FA и привязки
         executor.scheduleWithFixedDelay(this::tick, 500, 500, TimeUnit.MILLISECONDS);
 
@@ -133,6 +139,9 @@ public final class ElytrixAuthPlugin extends Plugin {
                 s.bar = null;
             }
         }
+        if (profileProvider != null) {
+            profileProvider.shutdown();
+        }
         if (executor != null) {
             executor.shutdownNow();
         }
@@ -165,6 +174,10 @@ public final class ElytrixAuthPlugin extends Plugin {
 
     public Database db() {
         return db;
+    }
+
+    public ProfileProvider profileProvider() {
+        return profileProvider;
     }
 
     public AuthSession session(UUID uuid) {

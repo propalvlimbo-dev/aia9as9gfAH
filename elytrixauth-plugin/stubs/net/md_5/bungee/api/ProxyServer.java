@@ -20,5 +20,6 @@ public abstract class ProxyServer {
     public abstract Map<String, ServerInfo> getServers();
     public abstract ServerInfo getServerInfo(String name);
     public abstract PluginManager getPluginManager();
+    public abstract void registerChannel(String channel);
     public abstract Title createTitle();
 }

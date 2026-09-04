@@ -12,6 +12,7 @@ public interface ProxiedPlayer extends Connection, CommandSender {
     Server getServer();
     PendingConnection getPendingConnection();
     void connect(ServerInfo target);
+    void sendData(String channel, byte[] data);
     void sendMessage(ChatMessageType position, BaseComponent... message);
     void sendMessage(ChatMessageType position, BaseComponent message);
 }

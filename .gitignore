@@ -13,3 +13,6 @@ __pycache__/
 .DS_Store
 *.log
 .toolchain/
+
+# Мост (Bukkit)
+elytrixauth-bridge/build/

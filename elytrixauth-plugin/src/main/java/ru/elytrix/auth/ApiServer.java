@@ -33,8 +33,12 @@ import java.util.logging.Logger;
  *   POST /api/notify            -> {"nickname":...,"tg_id":...,"notify":true/false}
  *                                -> {"ok":true,"notify":bool}
  *   GET  /api/logins?tg_id=&nickname= -> {"logins":[{ip,ts}]} (последние 10 входов)
- *   GET  /api/events?tg_id=&nickname= -> {"events":[],"elder":bool,"feature":"coming_soon"}
- *   GET  /api/alerts            -> {"alerts":[{tg_id,player_uuid,text}]}
+ *   GET  /api/events?tg_id=&nickname= -> {"events":[],"elder":bool,"lp":bool,"feature":"coming_soon"}
+ *   GET  /api/profile?tg_id=&nickname= -> {"donate":{"available","prefix","group"},
+*                                          "coins":{"available","value"}}
+*                                        (LuckPerms: прокси и/или игровой сервер через мост;
+*                                         PlayerPoints-коины — тоже через мост ElytrixAuthBridge)
+*   GET  /api/alerts            -> {"alerts":[{tg_id,player_uuid,text}]}
  *
  * Авторизация: заголовок X-Api-Key: <api.secret из config.properties>
  */
@@ -72,8 +76,9 @@ public final class ApiServer {
         server.createContext("/api/notify", this::handleNotify);
         server.createContext("/api/logins", this::handleLogins);
         server.createContext("/api/events", this::handleEvents);
+        server.createContext("/api/profile", this::handleProfile);
         server.createContext("/api/alerts", this::handleAlerts);
-        server.setExecutor(Executors.newFixedThreadPool(2, r -> {
+        server.setExecutor(Executors.newFixedThreadPool(4, r -> {
             Thread t = new Thread(r, "elytrix-api");
             t.setDaemon(true);
             return t;
@@ -694,12 +699,54 @@ public final class ApiServer {
             respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
             return;
         }
-        String group = plugin.luckPermsGroup(row.uuid);
-        boolean elder = group != null && cfg.elderGroups().contains(
+        ProfileProvider.ProfileData d = plugin.profileProvider().profile(row.uuid);
+        String group = d.lp ? d.lpGroup : null;
+        boolean elder = group != null && !group.isEmpty() && cfg.elderGroups().contains(
                 group.toLowerCase(java.util.Locale.ROOT));
         respondJson(ex, 200, "{\"ok\":true,\"elder\":" + elder
-                + ",\"lp\":" + (group != null)
+                + ",\"lp\":" + d.lp
                 + ",\"events\":[],\"feature\":\"coming_soon\"}");
+    }
+
+    /** Профиль для бота: донат (LuckPerms: префикс/группа) и коины (PlayerPoints). */
+    private void handleProfile(HttpExchange ex) throws IOException {
+        if (!authorized(ex)) {
+            respondError(ex, 401, "unauthorized");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            respondError(ex, 405, "method not allowed");
+            return;
+        }
+        String nickname = queryField(ex.getRequestURI(), "nickname");
+        String tgRaw = queryField(ex.getRequestURI(), "tg_id");
+        if (nickname == null || tgRaw == null) {
+            respondError(ex, 400, "nickname and tg_id required");
+            return;
+        }
+        long tgId;
+        try {
+            tgId = Long.parseLong(tgRaw.trim());
+        } catch (NumberFormatException e) {
+            respondError(ex, 400, "bad tg_id");
+            return;
+        }
+        Database.PlayerRow row = db.findPlayerCi(nickname).orElse(null);
+        if (row == null) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"player_not_found\"}");
+            return;
+        }
+        if (row.tgId == null || row.tgId != tgId) {
+            respondJson(ex, 200, "{\"ok\":false,\"error\":\"not_yours\"}");
+            return;
+        }
+        ProfileProvider.ProfileData d = plugin.profileProvider().profile(row.uuid);
+        respondJson(ex, 200, "{\"ok\":true,\"nickname\":" + jsonStr(row.nickname)
+                + ",\"donate\":{\"available\":" + d.lp
+                + ",\"prefix\":" + jsonStr(ProfileProvider.cleanColors(d.lpPrefix))
+                + ",\"group\":" + jsonStr(d.lpGroup) + "}"
+                + ",\"coins\":{\"available\":" + d.pp
+                + ",\"value\":" + d.coins + "}}");
     }
 
     /** Уведомления боту (например, о входе при выключенной 2FA). */

@@ -25,7 +25,7 @@ class ElytrixApi:
     async def _call(self, method: str, path: str, json: Optional[dict] = None) -> dict[str, Any]:
         """Низкоуровневый запрос: ApiError только при сетевых/HTTP-ошибках.
 
-        ok:false в теле — бизнес-ответ (неверный код, плохой пароль), его
+        ok:false в теле - бизнес-ответ (неверный код, плохой пароль), его
         разбирают вызывающие методы.
         """
         session = await self._session_get()
@@ -70,7 +70,7 @@ class ElytrixApi:
     async def link(self, code: str, tg_id: int) -> tuple[Optional[str], Optional[str]]:
         """Привязка по коду из /addtg.
 
-        Возвращает (ник, None) при успехе; при ошибке — (None, код_ошибки):
+        Возвращает (ник, None) при успехе; при ошибке - (None, код_ошибки):
         invalid_or_expired_code / tg_already_linked / ...
         """
         data = await self._call("POST", "/api/link", json={"code": code, "tg_id": tg_id})
@@ -123,6 +123,16 @@ class ElytrixApi:
                                 f"/api/events?tg_id={tg_id}&nickname={nickname}")
         if not data.get("ok"):
             raise ApiError(str(data.get("error", "unknown")))
+        return data
+
+    async def profile(self, nickname: str, tg_id: int) -> dict[str, Any]:
+        """Профиль: донат LuckPerms (префикс/группа) и коины PlayerPoints.
+
+        Возвращает: {"donate": {"available", "prefix", "group"},
+                     "coins": {"available", "value"}}
+        """
+        data = await self._request("GET",
+                                   f"/api/profile?tg_id={tg_id}&nickname={nickname}")
         return data
 
     async def alerts(self) -> list[dict[str, Any]]:

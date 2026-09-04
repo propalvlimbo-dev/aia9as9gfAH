@@ -1,0 +1,8 @@
+name: ElytrixAuthBridge
+version: 1.0
+main: ru.elytrix.bridge.ElytrixAuthBridge
+api-version: "1.13"
+author: Elytrix
+description: >-
+  Отвечает плагину ElytrixAuth (прокси) на запросы профиля: донат-префикс и
+  группа LuckPerms, коины PlayerPoints. Ставится на игровой сервер (target).
