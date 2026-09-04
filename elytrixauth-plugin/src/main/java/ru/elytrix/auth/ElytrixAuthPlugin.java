@@ -207,6 +207,7 @@ public final class ElytrixAuthPlugin extends Plugin {
         }
         s.lastTitleAt = 0;
         s.joinUiShown = false;
+        s.uiPending = false;
         s.welcomeScheduled = false;
         // первое периодическое напоминание — только через ~10 сек после входа,
         // чтобы не дублировать приветствие при заходе на сервер

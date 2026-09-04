@@ -185,26 +185,50 @@ public final class ElytrixAuthListener implements Listener {
         plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()
                 + " -> " + serverName + " (не авторизован, needReg=" + s.needReg
                 + ", UI=" + s.joinUiShown + ")");
-        if (!s.joinUiShown) {
-            // первое приземление (на auth): приветствие в зависимости от ситуации
-            s.joinUiShown = true;
-            if (s.sessionDropped) {
-                plugin.messages().chatList(p, "session-ip-changed");
-            }
-            if (s.needReg) {
-                plugin.messages().chatList(p, "join-msg-reg",
-                        "min", String.valueOf(plugin.cfg().minPassword()),
-                        "timeout", String.valueOf(plugin.cfg().loginTimeout()));
-            } else {
-                plugin.messages().chatList(p, "join-msg-login",
-                        "player", s.nickname,
-                        "timeout", String.valueOf(plugin.cfg().loginTimeout()));
-            }
+        if (!s.joinUiShown && !s.uiPending) {
+            // Первый показ UI (чат-приветствие, title, боссбар) откладываем ~1 сек:
+            // в момент самого переключения на auth (ServerConnected) клиент/прокси
+            // ещё доводят коннект, и мгновенный поток пакетов на некоторых форках
+            // (NullCordX/FlameCord с защитой от ботов) рвёт соединение.
+            s.uiPending = true;
+            final UUID uuid = p.getUniqueId();
+            final AuthSession sess = s;
+            final boolean needReg = s.needReg;
+            final boolean dropped = s.sessionDropped;
+            final int total = Math.max(1, s.totalSec > 0 ? s.totalSec : plugin.cfg().loginTimeout());
+            plugin.runLater(1000, () -> {
+                try {
+                    AuthSession cur = plugin.session(uuid);
+                    if (cur != sess || cur.joinUiShown) {
+                        return; // сессия сменилась / UI уже показан
+                    }
+                    ProxiedPlayer pp = plugin.proxy().getPlayer(uuid);
+                    if (pp == null || !pp.isConnected() || cur.isAuthed()) {
+                        return;
+                    }
+                    cur.joinUiShown = true;
+                    cur.uiPending = false;
+                    if (dropped) {
+                        plugin.messages().chatList(pp, "session-ip-changed");
+                    }
+                    if (needReg) {
+                        plugin.messages().chatList(pp, "join-msg-reg",
+                                "min", String.valueOf(plugin.cfg().minPassword()),
+                                "timeout", String.valueOf(total));
+                    } else {
+                        plugin.messages().chatList(pp, "join-msg-login",
+                                "player", cur.nickname,
+                                "timeout", String.valueOf(total));
+                    }
+                    plugin.showAuthUi(cur);
+                    Visual.title(pp,
+                            plugin.messages().raw(cur.needReg ? "join-title-reg" : "join-title-login"),
+                            plugin.messages().raw(cur.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
+                } catch (Throwable t) {
+                    plugin.getLogger().warning("ElytrixAuth: отложенный UI не показан: " + t);
+                }
+            });
         }
-        plugin.showAuthUi(s);
-        Visual.title(p,
-                plugin.messages().raw(s.needReg ? "join-title-reg" : "join-title-login"),
-                plugin.messages().raw(s.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
         long ms = (System.nanoTime() - t0) / 1_000_000;
         plugin.getLogger().info("ElytrixAuth: ServerConnected обработан за " + ms + " мс");
     }
