@@ -112,9 +112,17 @@ public final class PluginConfig {
 
     public String authServer()   { return get("auth.server", "auth"); }
     /** Принудительно вести неавторизованных на auth.server (ServerConnectEvent).
-     *  Если прокси сам маршрутизирует на auth (капча NullCordX/FlameCord) -
-     *  ставить false, чтобы два редиректа не дрались и не рвали коннект. */
-    public boolean authForceServer() { return getBool("auth.force.server", false); }
+     *  По умолчанию true — как в рабочих версиях. Если прокси сам маршрутизирует
+     *  на auth (капча NullCordX/FlameCord) и при true вход рвётся — ставьте false. */
+    public boolean authForceServer() { return getBool("auth.force.server", true); }
+
+    /** Читать ли аккаунт из БД в PostLogin СИНХРОННО (как в рабочей версии).
+     *  false — асинхронно, в фоне (не держим поток событий). */
+    public boolean entrySyncDb() { return getBool("entry.sync-db", true); }
+
+    /** Показывать ли первый UI (чат-приветствие/боссбар/title) сразу в
+     *  ServerConnectedEvent (как в рабочей версии). false — откладывать на 2.5с. */
+    public boolean entryUiImmediate() { return getBool("entry.ui-immediate", true); }
     public String targetServer() { return get("target.server", "grief"); }
 
     /** Путь к файлу встроенной БД (HSQLDB). Относительный — от папки плагина. */

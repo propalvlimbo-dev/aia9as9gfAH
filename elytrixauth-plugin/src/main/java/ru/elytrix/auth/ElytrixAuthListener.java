@@ -87,16 +87,19 @@ public final class ElytrixAuthListener implements Listener {
         // Здесь — только состояние (кики-дисконнекты допустимы: login-кик — штатный
         // пакет фазы LOGIN).
 
-        // Чтение БД (заморозка/сессия/новичок) делаем В ФОНЕ: HSQLDB на слабом
-        // VDS может тормозить 50-150 мс, а блокировать поток событий прокси в
-        // момент доводки коннекта до auth нельзя — сервер рвёт соединение
-        // («Сервер, на котором вы находились, выключился»). Пока БД отвечает,
-        // игрок уже на auth и видит экран; needReg докрутится через ~100 мс.
+        // Чтение БД (заморозка/сессия/новичок). По умолчанию (entry.sync-db=true) —
+        // СИНХРОННО, как в рабочих версиях: к моменту подключения к серверу
+        // needReg/автовход уже решены. entry.sync-db=false — в фоне (не держим
+        // поток событий прокси, needReg докрутится через ~100 мс после входа).
         final ProxiedPlayer fp = p;
         final String fip = ip;
         final AuthSession fs = s;
         final long fnow = now;
-        plugin.runAsync(() -> resolveJoinRow(fp, fs, fip, fnow));
+        if (plugin.cfg().entrySyncDb()) {
+            resolveJoinRow(fp, fs, fip, fnow);
+        } else {
+            plugin.runAsync(() -> resolveJoinRow(fp, fs, fip, fnow));
+        }
     }
 
     /** Фоновая часть PostLogin: читает аккаунт из БД и решает судьбу входа. */
@@ -205,12 +208,31 @@ public final class ElytrixAuthListener implements Listener {
         plugin.getLogger().info("ElytrixAuth: ServerConnected " + p.getName()
                 + " -> " + serverName + " (не авторизован, needReg=" + s.needReg
                 + ", UI=" + s.joinUiShown + ")");
-        if (!s.joinUiShown && !s.uiPending) {
-            // Первый показ UI (чат-приветствие, title, боссбар) откладываем:
-            // в момент самого переключения на auth (ServerConnected) клиент/прокси
-            // ещё доводят коннект, и поток пакетов в этом окне на некоторых форках
-            // (NullCordX/FlameCord с защитой от ботов) рвёт соединение. Ждём, пока
-            // у игрока реально появится сервер, и только потом шлём пакеты.
+        if (plugin.cfg().entryUiImmediate()) {
+            // Старое (рабочее) поведение: показываем первый экран ПРЯМО в событии —
+            // приветствие в чат, боссбар, title. Так работали версии без кика.
+            if (!s.joinUiShown) {
+                s.joinUiShown = true;
+                if (s.sessionDropped) {
+                    plugin.messages().chatList(p, "session-ip-changed");
+                }
+                if (s.needReg) {
+                    plugin.messages().chatList(p, "join-msg-reg",
+                            "min", String.valueOf(plugin.cfg().minPassword()),
+                            "timeout", String.valueOf(Math.max(1, s.totalSec > 0 ? s.totalSec : plugin.cfg().loginTimeout())));
+                } else {
+                    plugin.messages().chatList(p, "join-msg-login",
+                            "player", s.nickname,
+                            "timeout", String.valueOf(Math.max(1, s.totalSec > 0 ? s.totalSec : plugin.cfg().loginTimeout())));
+                }
+            }
+            plugin.showAuthUi(s);
+            Visual.title(p,
+                    plugin.messages().raw(s.needReg ? "join-title-reg" : "join-title-login"),
+                    plugin.messages().raw(s.needReg ? "join-subtitle-reg" : "join-subtitle-login"));
+        } else if (!s.joinUiShown && !s.uiPending) {
+            // Отложенный первый UI (entry.ui-immediate=false): ждём ~2.5 сек, пока
+            // коннект до сервера устаканится, потом шлём пакеты (с ретраями).
             s.uiPending = true;
             final UUID uuid = p.getUniqueId();
             final AuthSession sess = s;
